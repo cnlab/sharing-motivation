@@ -30,7 +30,8 @@ First, we load the relevant packages, define functions and plotting aesthetics, 
 ## load packages
 ```{r}
 library(pacman)
-pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, kableExtra, boot, install = TRUE)
+pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, kableExtra, boot, devtools, install = TRUE)
+devtools::install_github("hadley/emo")
 ```
 
 ## define functions
@@ -146,21 +147,25 @@ merged_wide %>%
   unique() %>%
   summarize(n = n()) %>%
   arrange(n) %>%
+  rename("sample" = site) %>%
   kable(digits = 2) %>%
   kableExtra::kable_styling()
 ```
 
 ## check number of trials
+Print participant IDs who have < 72 trials
 ```{r}
 merged_wide %>%
   group_by(pID) %>%
   summarize(n = n()) %>%
+  filter(n < 72) %>%
   arrange(n) %>%
   kable(digits = 2) %>%
   kableExtra::kable_styling()
 ```
 
 ## check missing response data
+Print participant IDs who have > 0 missing responses
 ```{r}
 merged_wide %>%
   filter(is.na(value)) %>%
@@ -339,7 +344,7 @@ ind_data = merged_wide %>%
 > Do the manipulations increase relevance?
 
 ### self-relevance {.tabset}
-`r emo::ji("x")`  H2a: Focus-on-self intervention (compared to control) will increase self-relevance
+`r emo::ji("x")`  H2a: Self-focused intervention (compared to control) will increase self-relevance
 
 ```{r}
 mod_h2a = lmer(self_relevance ~ cond + (1 | pID),
@@ -359,7 +364,7 @@ summary(mod_h2a)
 
 ### social relevance {.tabset}
 
-`r emo::ji("x")` H2b: Focus-on-other intervention (compared to control) will increase social relevance
+`r emo::ji("x")` H2b: Other-focused intervention (compared to control) will increase social relevance
 
 ```{r}
 mod_h2b = lmer(social_relevance ~ cond + (1 | pID),
@@ -465,7 +470,7 @@ summary(mod_h3)
 
 # preregistered analyses {.tabset}
 
-[Link to the preregistration](https://docs.google.com/document/d/1IFH5RquBgtJF-xYiBDYgLO7YF0D59DkENDHC9b00QQk/edit)
+[Link to the preregistration](https://osf.io/2d35g/?view_only=2049520e34d74cc99d1617abfc6dd124)
 
 Deviations:
 
@@ -479,7 +484,7 @@ Deviations:
 
 
 ### self-referential ROI {.tabset}
-`r emo::ji("check")` H4a: Focus-on-self intervention (compared to control) will increase brain activity in ROIs related to self-referential processes.
+`r emo::ji("check")` H4a: Self-focused intervention (compared to control) will increase brain activity in ROIs related to self-referential processes.
 
 ```{r}
 mod_h4a = lmer(self_referential ~ cond + (1 + cond | pID),
@@ -499,7 +504,7 @@ summary(mod_h4a)
 
 ### mentalizing ROI {.tabset}
 
-`r emo::ji("check")``r emo::ji("x")` H4b: Focus-on-other intervention (compared to control) will increase brain activity in ROIs related to mentalizing processes.
+`r emo::ji("check")``r emo::ji("x")` H4b: Other-focused intervention (compared to control) will increase brain activity in ROIs related to mentalizing processes.
 
 The other condition is associated with increased activation in the mentalizing ROI. However, when condition is allowed to vary randomly across people, the relationship is not statistically significant.
 
@@ -555,9 +560,9 @@ ind_data_h4 = merged %>%
 ## H5 {.tabset}
 > Do the manipulations increase sharing intentions?
 
-`r emo::ji("x")` H5a: Focus-on-self intervention (compared to control) will increase sharing intentions
+`r emo::ji("x")` H5a: Self-focused intervention (compared to control) will increase sharing intentions
 
-`r emo::ji("x")` H5b: Focus-on-other intervention (compared to control) will increase sharing intentions
+`r emo::ji("x")` H5b: Other-focused intervention (compared to control) will increase sharing intentions
 
 ```{r}
 mod_h5 = lmer(value ~ cond + (1 | pID),
@@ -584,7 +589,6 @@ predicted_h5 %>%
   geom_pointrange(aes(color = x, ymin = conf.low, ymax = conf.high), size = 1.5) +
   scale_color_manual(name = "", values = palette_condition, guide = "none") +
   scale_alpha_manual(name = "", values = c(1, .5)) +
-  scale_y_continuous(limits = c(2,3)) +
   labs(x = "", y = "predicted sharing intention\n") +
   plot_aes +
   theme(legend.position = c(.85, .15))
@@ -707,7 +711,7 @@ m_var = "parameter_estimate"
 
 ### self condition {.tabset}
 
-`r emo::ji("check")` H7a: The effect of focus-on-self intervention on sharing intention is mediated by increased activity in the self-referential ROI.
+`r emo::ji("check")` H7a: The effect of Self-focused intervention on sharing intention is mediated by increased activity in the self-referential ROI.
 
 ```{r}
 model_name = "mediation_self"
@@ -728,7 +732,7 @@ indirect.mlm.summary(get(model_name))
 
 ### other condition {.tabset}
 
-`r emo::ji("x")` H7b: The effect of focus-on-other intervention on sharing intention is mediated by increased activity in the mentalizing ROI.
+`r emo::ji("x")` H7b: The effect of Other-focused intervention on sharing intention is mediated by increased activity in the mentalizing ROI.
 
 ```{r}
 model_name = "mediation_other"
@@ -835,15 +839,15 @@ ind_data = merged_wide %>%
   filter(!(variable == "self-relevance" & roi == "mentalizing") & ! (variable == "social relevance" & roi == "self-referential"))
 
 (plot_h1 = predicted %>%
-  ggplot(aes(x, predicted)) +
-  geom_point(data = ind_data, aes(x, predicted, color = group), alpha = .1, size = .25, position = position_jitter(height = .1)) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = .2, color = NA) +
-  geom_line(aes(color = group), size = 1) +
+  ggplot(aes(x, predicted, color = group, fill = group)) +
+  stat_smooth(data = ind_data, aes(group = interaction(pID, group)), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .3, color = NA) +
+  geom_line(size = 2) +
   facet_grid(~variable) +
   scale_color_manual(name = "", values = palette_sample) +
   scale_fill_manual(name = "", values = palette_sample) +
   labs(x = "\nROI activity (SD)", y = "predicted rating\n") +
-  plot_aes  +
+  plot_aes +
   theme(legend.position = "top",
         legend.key.width=unit(2,"cm")))
 ```
@@ -1135,7 +1139,6 @@ predicted_h5 %>%
   geom_pointrange(aes(ymin = conf.low, ymax = conf.high, group = group),
                   size = .75, position = position_dodge(.1)) +
   scale_color_manual(name = "", values = palette_sample) +
-  scale_y_continuous(limits = c(2,3)) +
   labs(x = "", y = "predicted sharing intention\n") +
   plot_aes +
   theme(legend.position = c(.85, .15))

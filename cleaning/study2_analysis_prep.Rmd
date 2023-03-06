@@ -41,9 +41,9 @@ Create disaggregated dataset
 * Within-person variables are centered within-person and standardized across people
 
 ```{r}
-data_raw = read.csv("../data/study2_long.csv", stringsAsFactors = FALSE)
+data_raw = read.csv("../data/raw/study2_long.csv", stringsAsFactors = FALSE)
 
-articles = read.csv("../data/articles.csv", stringsAsFactors = FALSE) %>%
+articles = read.csv("../stimuli/articles.csv", stringsAsFactors = FALSE) %>%
   mutate(article_number = row_number()-1)
 
 stim_order = data_raw %>%

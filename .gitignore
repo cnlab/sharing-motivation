@@ -3,4 +3,6 @@
 .RData
 .Ruserdata
 .DS_Store
-data/
+*demo.csv
+*comments.csv
+raw/

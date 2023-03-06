@@ -131,7 +131,6 @@ surveys_wide = surveys %>%
 
 # quality checks
 ## failed attention checks
-
 ```{r}
 # identify failed attention checks
 failed_attn = surveys %>%
@@ -142,73 +141,12 @@ failed_attn = surveys %>%
   mutate_if(is.numeric, ~ifelse(is.na(.), 0, .))
 ```
 
-## summarize failed checks
-No one failed the attention check
-```{r}
-# failed = surveys %>% 
-#   select(SID) %>% 
-#   unique() %>% 
-#   mutate(`failed attention (one)` = ifelse(SID %in% single_attn$SID, 1, 0), 
-#          `failed attention (two)` = ifelse(SID %in% removed_attn$SID, 1, 0), 
-#          failed_attention = ifelse(SID %in% failed_attn$SID, 1, 0), 
-#          failed_comments = ifelse(SID %in% comments$SID, 1, 0), 
-#          `failed comments & attention (one)` = ifelse(`failed attention (one)` == 1 & failed_comments == 1, 1, 0),
-#          `failed comments & attention (two)` = ifelse(`failed attention (two)` == 1 & failed_comments == 1, 1, 0),
-#          `failed at least one check`  = ifelse(failed_attention == 1 | failed_english | failed_comments == 1, 1, 0))
-# 
-# failed_subs = failed %>%
-#   filter(`failed at least one check` == 1) %>%
-#   select(SID, failed_attention, failed_english, failed_comments) %>%
-#   mutate(n_failed = failed_attention + failed_english + failed_comments)
-# 
-# failed %>%
-#   gather(check, val, contains("fail")) %>% 
-#   filter(val == 1) %>% 
-#   group_by(check) %>% 
-#   summarize(n = n(),
-#             `%` = round(n / nrow(failed) * 100, 1)) %>%
-#   arrange(desc(n)) %>%
-#   kable(format = "pandoc")
-```
-
-## summarize rejected HITs
-```{r}
-# rejected = surveys %>% 
-#   select(SID) %>% 
-#   unique() %>% 
-#   mutate(failed_attention = ifelse(SID %in% removed_attn$SID, 1, 0), 
-#          failed_comments = ifelse(SID %in% rejected_comments$SID, 1, 0), 
-#          `failed comments & attention` = ifelse(failed_attention == 1 & failed_comments == 1, 1, 0),
-#          `failed at least one check`  = ifelse(failed_attention == 1 | failed_comments == 1, 1, 0))
-# 
-# rejected_subs = rejected %>%
-#   filter(`failed at least one check` == 1)
-# 
-# rejected %>%
-#   gather(check, val, contains("fail")) %>% 
-#   filter(val == 1) %>% 
-#   group_by(check) %>% 
-#   summarize(n = n(),
-#             `%` = round(n / nrow(failed) * 100, 1)) %>%
-#   arrange(desc(n)) %>%
-#   kable(format = "pandoc")
-```
-
 # exclude participants and select relevant variables
 
 Number of participants before exclusions = `r nrow(surveys_wide)`  
-Number of participants after exclusions = `r nrow(filter(surveys_wide, !SID %in% failed_subs$SID))`  
-Number excluded = `r nrow(failed_subs)`  
+Number of participants after exclusions = `r nrow(filter(surveys_wide, !SID %in% failed_attn$SID))`  
+Number excluded = `r nrow(failed_attn)`  
 
-Participants are excluded for:
-
-* Failing at least one of the attention check (N = `r nrow(filter(failed_subs, n_failed == 1 & failed_attention > 0))`)
-* Failing the English comprehension check (N = `r nrow(filter(failed_subs, n_failed == 1 & failed_english > 0))`)
-* * Writing comments that were irrelevant based on the SOP definition (N = `r nrow(filter(failed_subs, n_failed == 1 & failed_comments > 0))`)
-* More than one of these issues (N = `r nrow(filter(failed_subs, n_failed > 1))`)
-
-Number of participants who failed both attention checks and were removed = `r nrow(filter(failed_attn, n_failed == 2))`  
-Number of participants who's HIT was rejected (including for failing both attention checks) = `r nrow(rejected_subs)`  
 
 ```{r}
 surveys_clean = surveys %>%

@@ -1,5 +1,5 @@
 ---
-title: "Supplementary analyses"
+title: "Supplementary analyses: fMRI study 1"
 author: "Dani Cosme"
 date: "`r Sys.Date()`"
 output:
@@ -22,13 +22,20 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = FAL
 options(scipen=999)
 ```
 
-# load packages
+In this report, we reproduce the analyses using data from fMRI study 1 reported in Supplementary Material.
+
+# prep data {.tabset}
+First, we load the relevant packages, define functions and plotting aesthetics, and load and tidy the data.
+
+
+## load packages
 ```{r}
 library(pacman)
-pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, kableExtra, boot, install = TRUE)
+pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, kableExtra, boot, devtools, install = TRUE)
+devtools::install_github("hadley/emo")
 ```
 
-# define functions
+## define functions
 ```{r}
 source("https://gist.githubusercontent.com/benmarwick/2a1bb0133ff568cbe28d/raw/fb53bd97121f7f9ce947837ef1a4c65a73bffb3f/geom_flat_violin.R")
 
@@ -82,7 +89,7 @@ simple_slopes = function(model, var, moderator, continuous = TRUE) {
 
 ```
 
-# define aesthetics
+## define aesthetics
 ```{r}
 palette_condition = c("self" = "#ee9b00",
                       "control" = "#bb3e03",
@@ -225,9 +232,9 @@ ind_data = merged_wide %>%
 
 (plot_h1 = predicted %>%
   ggplot(aes(x, predicted)) +
-  geom_point(data = ind_data, aes(x, predicted, color = roi), alpha = .1, size = .25, position = position_jitter(height = .1)) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = roi), alpha = .2, color = NA) +
-  geom_line(aes(color = roi), size = 1) +
+  stat_smooth(data = ind_data, aes(group = pID, color = roi), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = roi), alpha = .3, color = NA) +
+  geom_line(aes(color = roi), size = 2) +
   facet_grid(~variable) +
   scale_color_manual(name = "", values = palette_roi, guide = FALSE) +
   scale_fill_manual(name = "", values = palette_roi, guide = FALSE) +
@@ -384,33 +391,30 @@ vals = seq(-4.5,4.5,.1)
 
 predicted_h6 = ggeffects::ggpredict(mod_h6a, c("self_referential [vals]")) %>%
   data.frame() %>%
-  mutate(atlas = "self-referential") %>%
+  mutate(roi = "self-referential") %>%
   bind_rows(ggeffects::ggpredict(mod_h6b, c("mentalizing [vals]")) %>%
               data.frame() %>%
-              mutate(atlas = "mentalizing")) %>%
-  mutate(atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
+              mutate(roi = "mentalizing")) %>%
+  mutate(roi = factor(roi, levels = c("self-referential", "mentalizing")))
 
 ind_data_h6 = merged %>%
-  mutate(atlas = recode(atlas, "pnas_self" = "self-referential",
-                        "pnas_mentalizing_nopc" = "mentalizing")) %>%
-  filter(atlas %in% c("self-referential", "mentalizing")) %>%
   select(pID, cond, run, trial, atlas, parameter_estimate_std, value) %>%
   rename("x" = parameter_estimate_std,
-         "predicted" = value) %>%
-  mutate(atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
+         "predicted" = value,
+         "roi" = atlas) %>%
+  mutate(roi = factor(roi, levels = c("self-referential", "mentalizing")))
 
 predicted_h6 %>%
-  ggplot(aes(x = x, y = predicted)) +
-  geom_point(data = ind_data_h6, aes(x, predicted, color = cond), position = position_jitter(.1, .1), alpha = .1, size = .5) + 
+  ggplot(aes(x = x, y = predicted, color = roi, fill = roi)) +
+  stat_smooth(data = ind_data_h6, aes(group = pID), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2, color = NA) +
   geom_line(size = 2) +
-  facet_grid(~atlas) +
-  scale_color_manual(name = "", values = palette_condition) +
-  scale_fill_manual(name = "", values = palette_condition) +
-  guides(colour = guide_legend(override.aes = list(alpha = 1, size = 3))) + 
+  facet_grid(~roi) +
+  scale_color_manual(name = "", values = palette_roi) +
+  scale_fill_manual(name = "", values = palette_roi) +
   labs(y = "predicted sharing intention\n", x = "\nROI activity (SD)") +
   plot_aes +
-  theme(legend.position = "top")
+  theme(legend.position = "none")
 ```
 
 ## H7 {.tabset}
@@ -443,7 +447,7 @@ m_var = "parameter_estimate"
 
 ### self condition {.tabset}
 
-`r emo::ji("check")` H7a: The effect of focus-on-self intervention on sharing intention will be mediated by increased activity in the self-referential ROI.
+`r emo::ji("check")` H7a: The effect of self-focused intervention on sharing intention will be mediated by increased activity in the self-referential ROI.
 
 ```{r}
 model_name = "mediation_self"
@@ -463,7 +467,7 @@ indirect.mlm.summary(get(model_name))
 
 ### other condition {.tabset}
 
-`r emo::ji("x")` H7b: The effect of focus-on-other intervention on sharing intention will be mediated by increased activity in the mentalizing ROI.
+`r emo::ji("x")` H7b: The effect of other-focused intervention on sharing intention will be mediated by increased activity in the mentalizing ROI.
 
 ```{r}
 model_name = "mediation_other"
@@ -855,7 +859,6 @@ predicted_h5 %>%
   geom_pointrange(aes(ymin = conf.low, ymax = conf.high, group = group),
                   size = .75, position = position_dodge(.1)) +
   scale_color_manual(name = "", values = palette_topic) +
-  scale_y_continuous(limits = c(2,3)) +
   labs(x = "", y = "predicted sharing intention\n") +
   plot_aes +
   theme(legend.position = c(.85, .15))
@@ -980,4 +983,9 @@ table_h1a %>% mutate(DV = "H1a: Self-relevance") %>%
   select(DV, everything()) %>%
   kable() %>%
   kable_styling()
+```
+
+# cite packages
+```{r}
+report::cite_packages()
 ```

@@ -1,0 +1,338 @@
+---
+title: "Supplementary analyses: follow-up behavioral study 2"
+author: "Dani Cosme"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, dpi = 300)
+options(scipen = 999)
+set.seed(65)
+```
+
+In this report, we reproduce the analyses using data from follow-up behavioral study 2 reported in Supplementary Material.
+
+# prep data {.tabset}
+First, we load the relevant packages, define functions and plotting aesthetics, and load and tidy the data.
+
+## load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, kableExtra, boot, devtools, EMAtools, install = TRUE)
+devtools::install_github("hadley/emo")
+```
+
+## define functions
+```{r}
+# MLM results table function
+table_model = function(model_data) {
+  model_data %>%
+  broom.mixed::tidy(conf.int = TRUE) %>%
+  filter(effect == "fixed") %>%
+  rename("SE" = std.error,
+         "t" = statistic,
+         "p" = p.value) %>%
+  select(-group, -effect) %>%
+  mutate_at(vars(-contains("term"), -contains("p")), round, 2) %>%
+  mutate(term = gsub("cond", "", term),
+         term = gsub("\\(Intercept\\)", "intercept", term),
+         term = gsub("article_other", "other", term),
+         term = gsub("article_self", "self", term),
+         term = gsub("topichealth", "topic (health)", term),
+         term = gsub("msg_rel_self", "self-relevance", term),
+         term = gsub("msg_rel_social", "social relevance", term),
+         term = gsub(":", " x ", term),
+         p = ifelse(p < .001, "< .001",
+             ifelse(p == 1, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
+         `b [95% CI]` = sprintf("%.2f [%0.2f, %.2f]", estimate, conf.low, conf.high)) %>%
+  select(term, `b [95% CI]`, df, t, p)
+}
+
+# simple effects function
+simple_effects = function(model, sharing = FALSE) {
+  if(sharing == FALSE) {
+    results = emmeans::contrast(emmeans::emmeans(model, ~ article_cond | group),
+                            "revpairwise", by = "group", adjust = "none") %>%
+      data.frame() %>%
+      filter(grepl("control", contrast)) %>%
+      select(contrast, group, estimate, p.value)
+  } else {
+    results = emmeans::contrast(emmeans::emmeans(model, ~ article_cond | group + sharing_type),
+                            "revpairwise", by = "group", adjust = "none") %>%
+      data.frame() %>%
+      filter(grepl("- control", contrast)) %>%
+      filter(!grepl("^control", contrast)) %>%
+      extract(contrast, c("exp_sharing", "control_sharing"), ".* (0|1) - control (0|1)", remove = FALSE) %>%
+      filter(exp_sharing == control_sharing) %>%
+      mutate(sharing_type = ifelse(exp_sharing == 0, "broadcast", "narrowcast"),
+             contrast = gsub("0|1", "", contrast)) %>%
+      select(contrast, sharing_type, group, estimate, p.value)
+  }
+  
+  results %>%
+    mutate(p.value = ifelse(p.value < .001, "< .001",
+                      ifelse(p.value == 1, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p.value))))) %>%
+    kable(digits = 2) %>%
+    kableExtra::kable_styling()
+}
+```
+
+
+## define aesthetics
+```{r}
+palette_condition = c("#ee9b00", "#bb3e03", "#005f73")
+palette_topic = c("climate" = "#E6805E",
+                 "health" = "#3A3357")
+
+plot_aes = theme_minimal() +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 12),
+        text = element_text(size = 16, family = "Futura Medium"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(color = "black"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+```
+
+## load data
+```{r}
+data = read.csv("../data/study2_data.csv", stringsAsFactors = FALSE) %>%
+  mutate(article_cond = ifelse(article_cond == "social", "other", article_cond))
+
+n_words = read.csv("../data/study2_n_words.csv", stringsAsFactors = FALSE) %>%
+  mutate(article_cond = ifelse(article_cond == "social", "other", article_cond))
+```
+
+# moderation by article topic, comment group only {.tabset}
+
+These analyses explore whether the analyses reported in follow-up behavioral study 2 of the main manuscript are moderated by article topic (health or climate). We focus on the comment group only because this is the only group for which the intervention was effective.
+
+```{r}
+data_comment = data %>%
+  filter(group == "comment") %>%
+  select(-group)
+```
+
+
+## H2 {.tabset}
+> Are the effects of the experimental manipulations on relevance moderated by article topic?
+
+### self-relevance {.tabset}
+There is a main effect of topic such that health articles are rated as more self-relevant than climate articles.
+
+The was also an interaction such that the effect of the self-focused condition on self-relevance was weaker for health articles.
+
+```{r}
+mod_h2a = lmer(msg_rel_self ~ article_cond * topic + (1 | SID),
+               data = filter(data_comment, sharing_type == 0), 
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+#### model table
+```{r}
+table_h2a = table_model(mod_h2a)
+
+table_h2a %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+#### summary
+```{r}
+summary(mod_h2a)
+```
+
+### social relevance {.tabset}
+
+There is a main effect of topic such that health articles are rated as more socially relevant than climate articles.
+
+These data are not consistent with moderation by topic.
+
+```{r}
+mod_h2b = lmer(msg_rel_social ~ article_cond * topic + (1 | SID),
+               data = filter(data_comment, sharing_type == 0), 
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+#### model table
+```{r}
+table_h2b = table_model(mod_h2b)
+
+table_h2b %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+#### summary
+```{r}
+summary(mod_h2b)
+```
+
+### combined plot
+```{r}
+predicted_h2 = ggeffects::ggpredict(mod_h2a, c("article_cond", "topic")) %>%
+  data.frame() %>%
+  mutate(model = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h2b, c("article_cond", "topic")) %>%
+              data.frame() %>%
+              mutate(model = "social relevance")) %>%
+  mutate(x = factor(x, levels = c("self", "control", "other")))
+
+ind_data_h2 = data_comment %>%
+  rename("x" = article_cond,
+         "group" = topic) %>%
+  gather(model, predicted, msg_rel_self, msg_rel_social) %>%
+  mutate(x = factor(x, levels = c("self", "control", "other")),
+         model = gsub("msg_rel_self", "self-relevance", model),
+         model = gsub("msg_rel_social", "social relevance", model))
+  
+(plot_h2 = predicted_h2 %>%
+  ggplot(aes(x = x, y = predicted, color = group)) +
+  stat_summary(data = ind_data_h2, aes(group = interaction(SID, group)), fun = "mean", geom = "line", size = .1, alpha = .75) +
+  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1, position = position_dodge(.1)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high, group = group),
+                  size = .75, position = position_dodge(.1)) +
+  facet_grid(~model) +
+  scale_color_manual(name = "", values = palette_topic) +
+  labs(x = "", y = "predicted rating\n") +
+  plot_aes +
+  theme(legend.position = c(.9, .2)))
+```
+
+## H3 {.tabset}
+
+> Are the relationships between self and social relevance and sharing intentions moderated by article topic?
+
+The relationship between self-relevance and sharing intentions was not moderated by topic.
+
+However, the relationship between social relevance and sharing intentions was slightly stronger for health articles compared to climate articles.
+
+```{r}
+mod_h3 = lmer(msg_share ~ msg_rel_self * topic + msg_rel_social * topic + (1 + msg_rel_self | SID),
+              data = data_comment,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### plot
+```{r}
+predicted = ggeffects::ggpredict(mod_h3, c("msg_rel_self", "topic")) %>%
+  data.frame() %>%
+  mutate(variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h3, c("msg_rel_social", "topic")) %>%
+              data.frame() %>%
+              mutate(variable = "social relevance"))
+
+points = data_comment %>%
+  rename("predicted" = msg_share,
+         "group" = topic) %>%
+  gather(variable, x, msg_rel_self, msg_rel_social) %>%
+  mutate(variable = gsub("msg_rel_self", "self-relevance", variable),
+         variable = gsub("msg_rel_social", "social relevance", variable))
+
+(plot_rel_sharing = predicted %>%
+  ggplot(aes(x, predicted, color = group, fill = group)) +
+  stat_smooth(data = points, aes(group = interaction(SID, group)), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2, color = NA) +
+  geom_line(size = 2) +
+  facet_grid(~variable) +
+  scale_color_manual(name = "", values = palette_topic) +
+  scale_fill_manual(name = "", values = palette_topic) +
+  labs(x = "\nrating", y = "predicted sharing intention\n") +
+  plot_aes)
+```
+
+### model table
+```{r}
+table_h3 = table_model(mod_h3)
+
+table_h3 %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h3)
+```
+
+## H5 {.tabset}
+> Are the effect of the experimental manipulations on sharing intentions moderated by article topic?
+
+There is a main effect of topic, such that health articles have higher sharing intentions than climate articles.
+
+These data are not consistent with moderation by topic.
+
+```{r}
+mod_h5 = lmer(msg_share ~ article_cond * topic + (1 | SID),
+              data = data_comment,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### plot
+```{r}
+predicted_h5 = ggeffects::ggpredict(mod_h5, c("article_cond", "topic")) %>%
+  data.frame() %>%
+  mutate(x = factor(x, levels = c("self", "control", "other")))
+
+ind_data_h5 = data_comment %>%
+  rename("x" = article_cond,
+         "predicted" = msg_share,
+         "group" = topic) %>%
+  mutate(x = factor(x, levels = c("self", "control", "other")))
+
+predicted_h5 %>%
+  ggplot(aes(x = x, y = predicted, color = group)) +
+  stat_summary(data = ind_data_h5, aes(group = interaction(SID, group)), fun = "mean", geom = "line", size = .1, alpha = .75) +
+  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1, position = position_dodge(.1)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high, group = group),
+                  size = .75, position = position_dodge(.1)) +
+  scale_color_manual(name = "", values = palette_topic) +
+  labs(x = "", y = "predicted sharing intention\n") +
+  plot_aes +
+  theme(legend.position = c(.9, .2))
+ 
+```
+
+### model table
+```{r}
+table_h5 = table_model(mod_h5)
+
+table_h5 %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h5)
+```
+
+## combined table
+```{r}
+table_h2a %>% mutate(DV = "H2a: Self-relevance") %>%
+  bind_rows(table_h2b %>% mutate(DV = "H2b: Social relevance")) %>%
+  bind_rows(table_h3 %>% mutate(DV = "H3a-b: Sharing intention")) %>%
+  bind_rows(table_h5 %>% mutate(DV = "H5: Sharing intention")) %>%
+  select(DV, everything()) %>%
+  kable() %>%
+  kable_styling()
+```
+
+# cite packages
+```{r}
+report::cite_packages()
+```

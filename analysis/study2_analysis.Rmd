@@ -20,7 +20,22 @@ options(scipen = 999)
 set.seed(65)
 ```
 
-# define functions
+In this report, we reproduce the analyses in the follow-up behavioral study 2.
+
+# prep data {.tabset}
+First, we load the relevant packages, define functions and plotting aesthetics, and load and tidy the data.
+
+## load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, kableExtra, boot, devtools, EMAtools, install = TRUE)
+devtools::install_github("hadley/emo")
+```
+
+## define functions
 ```{r}
 # MLM results table function
 table_model = function(model_data, eff_size = TRUE, word_count = TRUE) {
@@ -111,17 +126,6 @@ simple_effects = function(model, sharing = FALSE) {
 }
 ```
 
-# prep data {.tabset}
-First, we load the relevant packages and data, and define the plotting aesthetics.
-
-## load packages
-```{r}
-if(!require('pacman')) {
-	install.packages('pacman')
-}
-
-pacman::p_load(tidyverse, knitr, kableExtra, lmerTest, boot, report, brms, tidybayes, ggpubr, EMAtools, broom.mixed)
-```
 
 ## define aesthetics
 ```{r}
@@ -149,8 +153,9 @@ n_words = read.csv("../data/study2_n_words.csv", stringsAsFactors = FALSE) %>%
   mutate(article_cond = ifelse(article_cond == "social", "other", article_cond))
 ```
 
-# group ns
-Not sure whey we ended up with fewer people in the comment condition. Let's look into that.
+# descriptives {.tabset}
+## group ns
+Sample size by group
 
 ```{r}
 data %>%
@@ -162,70 +167,95 @@ data %>%
   kable_styling()
 ```
 
+## ratings
+Summarize means and SDs
+```{r}
+data %>%
+  gather(variable, value, msg_share, msg_rel_self, msg_rel_social) %>%
+  group_by(variable) %>%
+  summarize(M = mean(value, na.rm = TRUE),
+            SD = sd(value, na.rm = TRUE)) %>%
+  mutate(variable = ifelse(variable == "msg_rel_self", "self-relevance",
+                    ifelse(variable == "msg_rel_social", "social relevance", "sharing intention"))) %>%
+  kable(digits = 2) %>%
+  kableExtra::kable_styling()
+```
+
 # manipulation checks {.tabset}
-## self-relevance {.tabset}
-Test whether messages in the self condition will be rated as more self-relevant than messages in the control condition as a function of group.
+## H2 {.tabset}
+> Do the manipulations increase relevance? Is this effect stronger in the comment group?
 
-**Results**
+### self-relevance {.tabset}
 
-`r emo::ji("check")` We replicate our previous work in the comment group: the self condition increases self-relevance compared to the control
+`r emo::ji("check")` H2a: Self-focused intervention (compared to control) will increase self-relevance
 
-`r emo::ji("check")` This effect is smaller for both the timed and untimed groups
-
-```{r}
-mod_h1 = lmer(msg_rel_self ~ 1 + article_cond * group + (1 + article_cond | SID),
-              data = filter(data, sharing_type == 1),
-              control = lmerControl(optimizer = "bobyqa"))
-```
-
-### model summary table
-```{r}
-table_model(mod_h1, eff_size = FALSE)
-```
-
-### simple effects by group
-```{r}
-simple_effects(mod_h1)
-```
-
-## social relevance {.tabset}
-Test whether messages in the social condition will be rated as more socially relevant than messages in the control condition as a function of group.
-
-**Results**
-
-`r emo::ji("check")` We replicate our previous work in the comment group: the social condition increases social relevance compared to the control
+We replicate our previous work in the comment group: the self-focused condition increases self-relevance compared to the control
 
 `r emo::ji("check")` This effect is smaller for both the timed and untimed groups
 
 ```{r}
-mod_h2 = lmer(msg_rel_social ~ 1 + article_cond * group + (1 + article_cond | SID),
+mod_h2a = lmer(msg_rel_self ~ 1 + article_cond * group + (1 + article_cond | SID),
               data = filter(data, sharing_type == 1),
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
-### model summary table
+#### model table
 ```{r}
-table_model(mod_h2, eff_size = FALSE)
+table_model(mod_h2a, eff_size = FALSE)
 ```
 
-### simple effects by group
+#### simple effects by group
 ```{r}
-simple_effects(mod_h2)
+simple_effects(mod_h2a)
 ```
 
-## plot predicted effects
+#### summary
+```{r}
+summary(mod_h2a)
+```
+
+### social relevance {.tabset}
+
+`r emo::ji("check")` H2b: Other-focused intervention (compared to control) will increase social relevance
+
+We replicate our previous work in the comment group: the other-focused condition increases social relevance compared to the control
+
+`r emo::ji("check")` This effect is smaller for both the timed and untimed groups
+
+```{r}
+mod_h2b = lmer(msg_rel_social ~ 1 + article_cond * group + (1 + article_cond | SID),
+              data = filter(data, sharing_type == 1),
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+#### model table
+```{r}
+table_model(mod_h2b, eff_size = FALSE)
+```
+
+#### simple effects by group
+```{r}
+simple_effects(mod_h2b)
+```
+
+#### summary
+```{r}
+summary(mod_h2b)
+```
+
+### combined plot
 ```{r, fig.width=5, fig.height=4.5}
 # generate predicted values
-predicted_h1 = ggeffects::ggpredict(mod_h1, c("article_cond", "group")) %>%
+predicted_h2a = ggeffects::ggpredict(mod_h2a, c("article_cond", "group")) %>%
               data.frame() %>%
   mutate(model = "self-relevance")
 
-predicted_h2 = ggeffects::ggpredict(mod_h2, c("article_cond", "group")) %>%
+predicted_h2b = ggeffects::ggpredict(mod_h2b, c("article_cond", "group")) %>%
               data.frame() %>%
   mutate(model = "social relevance")
 
 # manipulation check plot
-bind_rows(predicted_h1, predicted_h2) %>%
+bind_rows(predicted_h2a, predicted_h2b) %>%
   mutate(x = factor(x, levels = c("self", "control", "other"))) %>%
   ggplot(aes(x = group, y = predicted, color = x)) +
   geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1) +
@@ -237,31 +267,35 @@ bind_rows(predicted_h1, predicted_h2) %>%
   theme(legend.position = "top")
 ```
 
-# condition effects narrowcasting only {.tabset}
-Test whether messages in the experimental conditions will evoke higher sharing intentions than messages in the control condition, and whether this is moderated by sharing type as a function group.
+# H5
+> Do the manipulations increase sharing intentions? Is this effect stronger in the comment group?
 
-**Results**
+## narrowcasting only {.tabset}
+Here we focus on narrowcasting only since that is the type of sharing we used in fMRI study 1.
 
-`r emo::ji("check")` We replicate our previous work in the comment group: the self and social conditions increase sharing intentions compared to the control, and these effects are stronger for narrowcast compared to broadcasting sharing intentions
+`r emo::ji("check")` H5a: Self-focused intervention (compared to control) will increase sharing intentions
+
+`r emo::ji("check")` H5b: Other-focused intervention (compared to control) will increase sharing intentions
+
+We replicate our previous work in the comment group: the self- and other-focused conditions increase sharing intentions compared to the control, and these effects are stronger for narrowcast compared to broadcasting sharing intentions
 
 `r emo::ji("check")` These effects were smaller for both the timed and untimed groups
 
 ```{r}
-mod_h3 = lmer(msg_share ~ 1 + article_cond*group + (1 + article_cond | SID),
+mod_h5 = lmer(msg_share ~ 1 + article_cond*group + (1 + article_cond | SID),
               data = filter(data, sharing_type == 1),
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
-
-## plot predicted effects
+### plot
 ```{r, fig.width=5, fig.height=4.5}
 # generate predicted values
-predicted_h3 = ggeffects::ggpredict(mod_h3, c("article_cond", "group")) %>%
+predicted_h5 = ggeffects::ggpredict(mod_h5, c("article_cond", "group")) %>%
               data.frame() %>%
   mutate(model = "sharing")
 
 # causal analysis plot
-predicted_h3 %>%
+predicted_h5 %>%
   mutate(x = factor(x, levels = c("self", "control", "other"))) %>%
   ggplot(aes(x = group, y = predicted, color = x)) +
   geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1) +
@@ -272,19 +306,78 @@ predicted_h3 %>%
   theme(legend.position = "top")
 ```
 
-## model summary table
+### model table
 ```{r}
-table_model(mod_h3, eff_size = FALSE)
+table_model(mod_h5, eff_size = FALSE)
 ```
 
-## simple effects by group
+### simple effects by group
 ```{r}
-simple_effects(mod_h3, sharing = FALSE)
+simple_effects(mod_h5, sharing = FALSE)
 ```
 
-# combined plot
+### summary
+```{r}
+summary(mod_h5)
+```
+
+## condition effects by sharing type {.tabset}
+Here we include both narrowcast and broadcast sharing, and assess potential interactions.
+
+`r emo::ji("check")` H5a: Self-focused intervention (compared to control) will increase sharing intentions
+
+`r emo::ji("check")` H5b: Other-focused intervention (compared to control) will increase sharing intentions
+
+We replicate our previous work in the comment group: the self and social conditions increase sharing intentions compared to the control, and these effects are stronger for narrowcast compared to broadcasting sharing intentions
+
+`r emo::ji("check")` These effects were smaller for both the timed and untimed groups
+
+```{r}
+mod_h5_sharing = lmer(msg_share ~ 1 + article_cond*sharing_type*group + (1 + sharing_type | SID),
+              data = data,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### plot
+```{r, fig.width=7, fig.height=5}
+# generate predicted values
+predicted_h5_sharing = ggeffects::ggpredict(mod_h5_sharing, c("article_cond", "sharing_type", "group")) %>%
+              data.frame() %>%
+  mutate(group = ifelse(group == "0", "broadcast sharing", "narrowcast sharing"),
+         facet = ifelse(grepl("time", facet), sprintf("reflect:\n%s", facet), "comment"),
+         facet = factor(facet, levels = c("reflect:\ntimed", "reflect:\nuntimed", "comment")))
+
+# causal analysis plot
+predicted_h5_sharing %>%
+  mutate(group = gsub(" sharing", "", group)) %>%
+  ggplot(aes(x = facet, y = predicted, color = x)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1) +
+  facet_grid(~ group) +
+  coord_flip() +
+  scale_color_manual(name = "", values = palette_condition) +
+  labs(x = "", y = "\nmean predicted sharing intention rating") +
+  plot_aes +
+  theme(legend.position = "top")
+```
+
+### model table
+```{r}
+table_model(mod_h5_sharing, eff_size = FALSE)
+```
+
+### simple effects by group
+```{r}
+simple_effects(mod_h5_sharing, sharing = TRUE)
+```
+
+### summary
+```{r}
+summary(mod_h5_sharing)
+```
+
+## combined plot
 ```{r, fig.width=8, fig.height=5.75}
-bind_rows(predicted_h1, predicted_h2, predicted_h3) %>%
+bind_rows(predicted_h2a, predicted_h2b, predicted_h5) %>%
   mutate(model = factor(model, levels = c("self-relevance", "social relevance", "sharing")),
          x = factor(x, levels = c("self", "control", "other")),
          group = ifelse(group == "timed", "reflect:\ntimed",
@@ -300,60 +393,10 @@ bind_rows(predicted_h1, predicted_h2, predicted_h3) %>%
   theme(legend.position = "top")
 ```
 
-# condition effects by sharing type {.tabset}
-Test whether messages in the experimental conditions will evoke higher sharing intentions than messages in the control condition, and whether this is moderated by sharing type as a function group.
-
-**Results**
-
-`r emo::ji("check")` We replicate our previous work in the comment group: the self and social conditions increase sharing intentions compared to the control, and these effects are stronger for narrowcast compared to broadcasting sharing intentions
-
-`r emo::ji("check")` These effects were smaller for both the timed and untimed groups
-
-```{r}
-mod_h3_h4 = lmer(msg_share ~ 1 + article_cond*sharing_type*group + (1 + sharing_type | SID),
-              data = data,
-              control = lmerControl(optimizer = "bobyqa"))
-```
-
-
-## plot predicted effects
-```{r, fig.width=7, fig.height=5}
-# generate predicted values
-predicted_h3_h4 = ggeffects::ggpredict(mod_h3_h4, c("article_cond", "sharing_type", "group")) %>%
-              data.frame() %>%
-  mutate(group = ifelse(group == "0", "broadcast sharing", "narrowcast sharing"),
-         facet = ifelse(grepl("time", facet), sprintf("reflect:\n%s", facet), "comment"),
-         facet = factor(facet, levels = c("reflect:\ntimed", "reflect:\nuntimed", "comment")))
-
-# causal analysis plot
-predicted_h3_h4 %>%
-  mutate(group = gsub(" sharing", "", group)) %>%
-  ggplot(aes(x = facet, y = predicted, color = x)) +
-  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1) +
-  facet_grid(~ group) +
-  coord_flip() +
-  scale_color_manual(name = "", values = palette_condition) +
-  labs(x = "", y = "\nmean predicted sharing intention rating") +
-  plot_aes +
-  theme(legend.position = "top")
-```
-
-## model summary table
-```{r}
-table_model(mod_h3_h4, eff_size = FALSE)
-```
-
-## simple effects by group
-```{r}
-simple_effects(mod_h3_h4, sharing = TRUE)
-```
-
-
-
 # word count analyses {.tabset}
 Test whether word count is higher in the experimental conditions, and whether it is positively associated with self and social relevance, and sharing intention ratings.
 
-## summarize
+## descriptives
 ```{r}
 words_ratings = n_words %>%
   left_join(., data) %>%
@@ -370,11 +413,9 @@ n_words %>%
   kableExtra::kable_styling()
 ```
 
-## condition model {.tabset}
+## condition effects {.tabset}
 
-Is word count higher in the experimental conditions compared to the control condition?
-
-**Results**
+> Is word count higher in the experimental conditions compared to the control condition?
 
 `r emo::ji("check")` The word count is higher in the experimental conditions compared to the control condition
 
@@ -384,7 +425,7 @@ mod_words = lmer(n ~ 1 + article_cond + (1 + article_cond | SID),
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
-### plot predicted effects
+### plot
 ```{r}
 predicted = ggeffects::ggpredict(mod_words, c("article_cond")) %>%
               data.frame()
@@ -399,17 +440,20 @@ predicted %>%
   theme(legend.position = "top")
 ```
 
-### model summary
+### model table
 ```{r}
 table_model(mod_words, eff_size = FALSE)
 ```
 
-## relevance models {.tabset}
-Is word count positively associated with self and social relevance ratings?
+### summary
+```{r}
+summary(mod_words)
+```
+
+## relevance {.tabset}
+> Is word count positively associated with self and social relevance ratings?
 
 ### self-relevance {.tabset}
-
-**Results**
 
 `r emo::ji("check")` Word count is positively associated with self-relevance ratings
 
@@ -419,7 +463,7 @@ mod_words_h1 = lmer(msg_rel_self ~ 1 + n_c + (1 + n_c | SID),
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
-#### plot predicted effects
+#### plot
 ```{r}
 values = seq(-15, 60, 10)
 predicted_self = ggeffects::ggpredict(mod_words_h1, terms = "n_c [values]") %>%
@@ -434,14 +478,17 @@ predicted_self %>%
   plot_aes
 ```
 
-#### model summary
+#### model table
 ```{r}
 table_model(mod_words_h1, eff_size = FALSE, word_count = TRUE)
 ```
 
-### social relevance {.tabset}
+#### summary
+```{r}
+summary(mod_words_h1)
+```
 
-**Results**
+### social relevance {.tabset}
 
 `r emo::ji("check")` Word count is positively associated with social relevance ratings
 
@@ -453,7 +500,7 @@ mod_words_h2 = lmer(msg_rel_social ~ 1 + n_c + (1 + n_c | SID),
 
 ```
 
-#### plot predicted effects
+#### plot
 ```{r}
 values = seq(-15, 60, 10)
 predicted_social = ggeffects::ggpredict(mod_words_h2, terms = "n_c [values]") %>%
@@ -468,9 +515,14 @@ predicted_social %>%
   plot_aes
 ```
 
-#### model summary
+#### model table
 ```{r}
 table_model(mod_words_h2, eff_size = FALSE, word_count = TRUE)
+```
+
+#### summary
+```{r}
+summary(mod_words_h2)
 ```
 
 ### combined plot
@@ -500,12 +552,13 @@ predicted_self %>%
   theme(legend.position = c(.85, .21))
 ```
 
-## sharing models {.tabset}
-Is word count positively associated with sharing intention ratings?
+## sharing {.tabset}
+> Is word count positively associated with sharing intention ratings?
 
-**Results**
+### narrowcasting only {.tabset}
+Here we focus on narrowcasting only since that is the type of sharing we used in fMRI study 1.
 
-`r emo::ji("check")` Word count is positively associated with sharing intentions (averaging across sharing types), but doesn't differ by sharing type
+`r emo::ji("check")` Word count is positively associated with narrowcast sharing intentions
 
 ```{r}
 mod_words_h3 = lmer(msg_share ~ 1 + n_c + (1 + n_c | SID),
@@ -513,7 +566,7 @@ mod_words_h3 = lmer(msg_share ~ 1 + n_c + (1 + n_c | SID),
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
-### plot predicted effects
+#### plot
 ```{r}
 values = seq(-15, 60, 10)
 predicted_sharing = ggeffects::ggpredict(mod_words_h3, terms = c("n_c [values]")) %>%
@@ -529,12 +582,54 @@ predicted_sharing %>%
   plot_aes
 ```
 
-### model summary
+#### model table
 ```{r}
 table_model(mod_words_h3, eff_size = FALSE, word_count = TRUE)
 ```
 
-### combined plot
+#### summary
+```{r}
+summary(mod_words_h3)
+```
+
+### sharing models by sharing type {.tabset}
+
+`r emo::ji("check")` Word count is positively associated with sharing intentions (averaging across sharing types), but doesn't differ by sharing type
+
+```{r}
+mod_words_h4 = lmer(msg_share ~ 1 + n_c * sharing_type + (1 + n_c | SID),
+              data = words_ratings,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+#### plot
+```{r}
+values = seq(-20, 60, 10)
+predicted = ggeffects::ggpredict(mod_words_h4, terms = c("n_c [values]", "sharing_type")) %>%
+  data.frame() %>%
+  mutate(group = ifelse(group == "0", "broadcast sharing", "narrowcast sharing"))
+
+predicted %>%
+  ggplot(aes(x, predicted, color = group, fill = group)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .25, color = NA) +
+  geom_line(size = 1) +
+  scale_color_manual(values = palette_sharing, name = "") +
+  scale_fill_manual(values = palette_sharing, name = "") +
+  labs(x = "\nword count (grand mean-centered)", y = "predicted sharing intention rating\n") +
+  plot_aes
+```
+
+#### model table
+```{r}
+table_model(mod_words_h4, eff_size = FALSE, word_count = TRUE)
+```
+
+#### summary
+```{r}
+summary(mod_words_h4)
+```
+
+## combined plot
 ```{r}
 data_raw = words_ratings %>%
   filter(sharing_type == 1) %>%
@@ -563,257 +658,7 @@ predicted_self %>%
   theme(legend.position = c(.85, .21))
 ```
 
-## sharing models by sharing type {.tabset}
-Is word count positively associated with sharing intention ratings?
-
-**Results**
-
-`r emo::ji("check")` Word count is positively associated with sharing intentions (averaging across sharing types), but doesn't differ by sharing type
-
+# cite packages
 ```{r}
-mod_words_h3 = lmer(msg_share ~ 1 + n_c * sharing_type + (1 + n_c | SID),
-              data = words_ratings,
-              control = lmerControl(optimizer = "bobyqa"))
-```
-
-### plot predicted effects
-```{r}
-values = seq(-20, 60, 10)
-predicted = ggeffects::ggpredict(mod_words_h3, terms = c("n_c [values]", "sharing_type")) %>%
-  data.frame() %>%
-  mutate(group = ifelse(group == "0", "broadcast sharing", "narrowcast sharing"))
-
-predicted %>%
-  ggplot(aes(x, predicted, color = group, fill = group)) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .25, color = NA) +
-  geom_line(size = 1) +
-  scale_color_manual(values = palette_sharing, name = "") +
-  scale_fill_manual(values = palette_sharing, name = "") +
-  labs(x = "\nword count (grand mean-centered)", y = "predicted sharing intention rating\n") +
-  plot_aes
-```
-
-### model summary
-```{r}
-table_model(mod_words_h3, eff_size = FALSE, word_count = TRUE)
-```
-
-# moderation by article topic comment group only {.tabset}
-
-These analyses explore whether the analyses reported in study 2 of the main manuscript are moderated by article topic (health or climate).
-
-```{r}
-data_comment = data %>%
-  filter(group == "comment") %>%
-  select(-group)
-```
-
-
-## H2 {.tabset}
-> Are the effects of the experimental manipulations on relevance moderated by article topic?
-
-### self-relevance {.tabset}
-There is a main effect of topic such that health articles are rated as more self-relevant than climate articles.
-
-The was also an interaction such that the effect of the self-focused condition on self-relevance was weaker for health articles.
-
-```{r}
-mod_h2a = lmer(msg_rel_self ~ article_cond * topic + (1 | SID),
-               data = filter(data_comment, sharing_type == 0), 
-              control = lmerControl(optimizer = "bobyqa"))
-```
-
-#### model table
-```{r}
-table_h2a = table_model(mod_h2a)
-
-table_h2a
-```
-
-#### summary
-```{r}
-summary(mod_h2a)
-```
-
-### social relevance {.tabset}
-
-There is a main effect of topic such that health articles are rated as more socially relevant than climate articles.
-
-These data are not consistent with moderation by topic.
-
-```{r}
-mod_h2b = lmer(msg_rel_social ~ article_cond * topic + (1 | SID),
-               data = filter(data_comment, sharing_type == 0), 
-              control = lmerControl(optimizer = "bobyqa"))
-```
-
-#### model table
-```{r}
-table_h2b = table_model(mod_h2b)
-
-table_h2b
-```
-
-#### summary
-```{r}
-summary(mod_h2b)
-```
-
-### combined plot
-```{r}
-predicted_h2 = ggeffects::ggpredict(mod_h2a, c("article_cond", "topic")) %>%
-  data.frame() %>%
-  mutate(model = "self-relevance") %>%
-  bind_rows(ggeffects::ggpredict(mod_h2b, c("article_cond", "topic")) %>%
-              data.frame() %>%
-              mutate(model = "social relevance")) %>%
-  mutate(x = factor(x, levels = c("self", "control", "other")))
-
-ind_data_h2 = data_comment %>%
-  rename("x" = article_cond,
-         "group" = topic) %>%
-  gather(model, predicted, msg_rel_self, msg_rel_social) %>%
-  mutate(x = factor(x, levels = c("self", "control", "other")),
-         model = gsub("msg_rel_self", "self-relevance", model),
-         model = gsub("msg_rel_social", "social relevance", model))
-  
-(plot_h2 = predicted_h2 %>%
-  ggplot(aes(x = x, y = predicted)) +
-  # stat_summary(data = ind_data_h2, aes(group = SID, linetype = group), fun = "mean", geom = "line",
-  #              size = .1, color = "grey50") +
-  stat_summary(aes(group = group, linetype = group),
-               fun = "mean", geom = "line", size = 1, position = position_dodge(.1)) +
-  geom_pointrange(aes(color = x, ymin = conf.low, ymax = conf.high, group = group),
-                  size = .75, position = position_dodge(.1)) +
-  facet_grid(~model) +
-  scale_color_manual(name = "", values = palette_condition, guide = "none") +
-  scale_linetype_manual(name = "", values = c("solid", "dotted")) +
-  labs(x = "", y = "predicted rating\n") +
-  plot_aes +
-  theme(legend.position = c(.85, .15)))
-```
-
-## H3 {.tabset}
-
-> Are the relationships between self and social relevance and sharing intentions moderated by article topic?
-
-The relationship between self-relevance and sharing intentions was not moderated by topic.
-
-However, the relationship between social relevance and sharing intentions was slightly stronger for health articles compared to climate articles.
-
-```{r}
-mod_h3 = lmer(msg_share ~ msg_rel_self * topic + msg_rel_social * topic + (1 + msg_rel_self | SID),
-              data = data_comment,
-              control = lmerControl(optimizer = "bobyqa"))
-```
-
-### plot
-```{r}
-predicted = ggeffects::ggpredict(mod_h3, c("msg_rel_self", "topic")) %>%
-  data.frame() %>%
-  mutate(variable = "self-relevance") %>%
-  bind_rows(ggeffects::ggpredict(mod_h3, c("msg_rel_social", "topic")) %>%
-              data.frame() %>%
-              mutate(variable = "social relevance"))
-
-points = data_comment %>%
-  rename("predicted" = msg_share,
-         "group" = topic) %>%
-  gather(variable, x, msg_rel_self, msg_rel_social) %>%
-  mutate(variable = gsub("msg_rel_self", "self-relevance", variable),
-         variable = gsub("msg_rel_social", "social relevance", variable))
-
-(plot_rel_sharing = predicted %>%
-  ggplot(aes(x, predicted)) +
-  geom_point(data = points, aes(x, predicted, color = group),
-             alpha = .5, size = .25) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = group), alpha = .2, color = NA) +
-  geom_line(aes(color = group), size = 1) +
-  facet_grid(~variable) +
-  # scale_color_manual(name = "", values = palette_topic) +
-  # scale_fill_manual(name = "", values = palette_topic) +
-  labs(x = "\nrating", y = "predicted sharing intention\n") +
-  plot_aes)
-```
-
-### model table
-```{r}
-table_h3 = table_model(mod_h3)
-
-table_h3
-```
-
-### summary
-```{r}
-summary(mod_h3)
-```
-
-## H5 {.tabset}
-> Are the effect of the experimental manipulations on sharing intentions moderated by article topic?
-
-There is a main effect of topic, such that health articles have higher sharing intentions than climate articles.
-
-These data are not consistent with moderation by topic.
-
-```{r}
-mod_h5 = lmer(msg_share ~ article_cond * topic + (1 | SID),
-              data = data_comment,
-              control = lmerControl(optimizer = "bobyqa"))
-```
-
-### plot
-```{r}
-predicted_h5 = ggeffects::ggpredict(mod_h5, c("article_cond", "topic")) %>%
-  data.frame() %>%
-  mutate(x = factor(x, levels = c("self", "control", "other")))
-
-ind_data_h5 = data_comment %>%
-  rename("x" = article_cond,
-         "predicted" = msg_share,
-         "group" = topic) %>%
-  mutate(x = factor(x, levels = c("self", "control", "other")))
-  
-predicted_h5 %>%
-  ggplot(aes(x = x, y = predicted)) +
-  # stat_summary(data = ind_data_h5, aes(group = SID, linetype = group),
-  #              fun = "mean", geom = "line", size = .25, color = "grey50") +
-  stat_summary(aes(group = group, linetype = group),
-               fun = "mean", geom = "line", size = 1.5) +
-  geom_pointrange(aes(color = x, ymin = conf.low, ymax = conf.high, group = group),
-                  size = 1.5) +
-  scale_color_manual(name = "", values = palette_condition, guide = "none") +
-  scale_linetype_manual(name = "", values = c("solid", "dotted")) +
-  labs(x = "", y = "predicted sharing intention\n") +
-  plot_aes +
-  theme(legend.position = c(.85, .15))
- 
-```
-
-### model table
-```{r}
-table_h5 = table_model(mod_h5)
-
-table_h5
-```
-
-### summary
-```{r}
-summary(mod_h5)
-```
-
-## combined table
-```{r}
-# table_h1a %>% mutate(DV = "H1a: Self-relevance") %>%
-#   bind_rows(table_h1b %>% mutate(DV = "H1b: Social relevance")) %>%
-#   bind_rows(table_h2a %>% mutate(DV = "H2a: Self-relevance")) %>%
-#   bind_rows(table_h2b %>% mutate(DV = "H2b: Social relevance")) %>%
-#   bind_rows(table_h3 %>% mutate(DV = "H3a-b: Sharing intention")) %>%
-#   bind_rows(table_h4a %>% mutate(DV = "H4a: Self-referential ROI")) %>%
-#   bind_rows(table_h4b %>% mutate(DV = "H4b: Mentalizing ROI")) %>%
-#   bind_rows(table_h5 %>% mutate(DV = "H5: Sharing intention")) %>%
-#   bind_rows(table_h6a %>% mutate(DV = "H6a: Sharing intention")) %>%
-#   bind_rows(table_h6b %>% mutate(DV = "H6b: Sharing intention")) %>%
-#   select(DV, everything()) %>%
-#   kable() %>%
-#   kable_styling()
+report::cite_packages()
 ```
