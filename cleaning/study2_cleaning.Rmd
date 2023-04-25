@@ -79,8 +79,7 @@ knitr::kable(arrange(select(surveysFiltered, name), name))
 ```
 
 ## load data
-* The survey key is located [here]()
-* The message stimuli can be found [here]())
+* The message stimuli can be found [here](https://osf.io/ak6wf))
 
 ```{r}
 survey_raw = scorequaltrics::get_survey_responses(surveysFiltered$id[1])

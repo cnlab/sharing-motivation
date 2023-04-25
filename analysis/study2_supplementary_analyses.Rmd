@@ -270,7 +270,7 @@ summary(mod_h3)
 ```
 
 ## H5 {.tabset}
-> Are the effect of the experimental manipulations on sharing intentions moderated by article topic?
+> Are the effects of the experimental manipulations on sharing intentions moderated by article topic?
 
 There is a main effect of topic, such that health articles have higher sharing intentions than climate articles.
 

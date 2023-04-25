@@ -1015,7 +1015,7 @@ summary(mod_h3)
 
 
 ### self-referential ROI {.tabset}
-There is a main effect of site, such that the Philadelphia cohort has greater activity in the self-referential ROI compared to the Amsterdam cohort.
+There is a main effect of site, such that the American cohort has greater activity in the self-referential ROI compared to the Dutch cohort.
 
 These data are not consistent with moderation by cultural context.
 
@@ -1046,7 +1046,7 @@ summary(mod_h4a)
 
 ### mentalizing ROI {.tabset}
 
-There is a main effect of site, such that the Philadelphia cohort has greater activity in the self-referential ROI compared to the Amsterdam cohort.
+There is a main effect of site, such that the American cohort has greater activity in the self-referential ROI compared to the Dutch cohort.
 
 These data are not consistent with moderation by cultural context.
 
@@ -1110,7 +1110,7 @@ ind_data_h4 = merged %>%
 ```
 
 ## H5 {.tabset}
-> Are the effect of the experimental manipulations on sharing intentions moderated by cultural context?
+> Are the effects of the experimental manipulations on sharing intentions moderated by cultural context?
 
 These data are not consistent with moderation by cultural context.
 

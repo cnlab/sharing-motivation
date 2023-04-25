@@ -73,9 +73,9 @@ betas = fs::dir_ls("../data/raw/task-share_model-beta/", regexp = ".*csv") %>%
   mutate(pID = gsub("sub-", "", pID)) %>%
   group_by(atlas) %>%
   mutate(outlier = ifelse(global_mean > mean(global_mean, na.rm = TRUE) + 3 * sd(global_mean, na.rm = TRUE), "yes",
-                   ifelse(global_mean < mean(global_mean, na.rm = TRUE) - 3 * sd(global_mean, na.rm = TRUE), "yes", "no"))) %>%
-  unique() %>%
-  filter(atlas %in% c("self-referential", "mentalizing"))
+                   ifelse(global_mean < mean(global_mean, na.rm = TRUE) - 3 * sd(global_mean, na.rm = TRUE), "yes", "no")),
+         atlas = recode(atlas, "self" = "self-referential")) %>%
+  unique()
 
 merged_all = betas %>%
   left_join(., events, by = c("pID", "event")) %>%
