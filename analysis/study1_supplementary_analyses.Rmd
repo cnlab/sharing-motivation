@@ -59,7 +59,7 @@ table_model = function(model_data) {
          term = gsub("social_relevance", "social relevance", term),
          term = gsub(":", " x ", term),
          p = ifelse(p < .001, "< .001",
-             ifelse(p == 1, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
+             ifelse(p > .999, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
          `b [95% CI]` = sprintf("%.2f [%0.2f, %.2f]", estimate, conf.low, conf.high)) %>%
   select(term, `b [95% CI]`, df, t, p)
 }
@@ -149,7 +149,7 @@ In order to maximize the differentiation between the self-referential and mental
 
 
 ## ROI correlations
-Compared to the preregistered Neurosynth ROIs (r = .94, 95% CI [.93, .94]), the correlation between the alternative ROIs are substantially reduced.
+Compared to the preregistered Neurosynth ROIs (r = .94, 95% CI [.94, .94]), the correlation between the alternative ROIs are substantially reduced.
 
 ```{r}
 merged_wide_alt %>%

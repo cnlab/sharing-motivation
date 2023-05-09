@@ -58,7 +58,7 @@ table_model = function(model_data, print = TRUE) {
            term = gsub("social_relevance", "social relevance", term),
            term = gsub(":", " x ", term),
            p = ifelse(p < .001, "< .001",
-               ifelse(p == 1, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
+               ifelse(p > .999, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
            `b [95% CI]` = sprintf("%.2f [%0.2f, %.2f]", estimate, conf.low, conf.high)) %>%
     select(term, `b [95% CI]`, df, t, p)
   
@@ -1106,7 +1106,7 @@ ind_data_h4 = merged %>%
   scale_color_manual(name = "", values = palette_sample) +
   labs(x = "", y = "ROI activity (SD)\n") +
   plot_aes +
-  theme(legend.position = c(.85, .15)))
+  theme(legend.position = c(.18, .95)))
 ```
 
 ## H5 {.tabset}
