@@ -55,8 +55,8 @@ table_model = function(model_data) {
          term = gsub("condself", "self", term),
          term = gsub("topichealth", "topic (health)", term),
          term = gsub("self_referential", "self-referential", term),
-         term = gsub("self_relevance", "self-relevance", term),
-         term = gsub("social_relevance", "social relevance", term),
+         term = gsub("self_relevance_z", "self-relevance", term),
+         term = gsub("social_relevance_z", "social relevance", term),
          term = gsub(":", " x ", term),
          p = ifelse(p < .001, "< .001",
              ifelse(p > .999, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
@@ -119,20 +119,27 @@ plot_aes = theme_minimal() +
 ```{r}
 merged_all = read.csv("../data/study1_data.csv")
 
+ratings_z = merged_all %>%
+  select(pID, event, trial, self_relevance, social_relevance) %>%
+  unique() %>%
+  mutate(self_relevance_z = scale(self_relevance, center = TRUE, scale = TRUE),
+         social_relevance_z = scale(social_relevance, center = TRUE, scale = TRUE))
+
 merged = merged_all %>%
   filter(outlier == "no" | is.na(outlier)) %>%
   group_by(pID, atlas) %>%
-  mutate(parameter_estimate_std = parameter_estimate / sd(parameter_estimate, na.rm = TRUE)) 
+  mutate(parameter_estimate_std = parameter_estimate / sd(parameter_estimate, na.rm = TRUE)) %>%
+  left_join(., ratings_z)
 
 merged_wide = merged %>%
   filter(atlas %in% c("self-referential", "mentalizing")) %>%
-  select(site, pID, trial, topic, cond, value, self_relevance, social_relevance, atlas, parameter_estimate_std) %>%
+  select(site, pID, trial, topic, cond, value, self_relevance, self_relevance_z, social_relevance, social_relevance_z, atlas, parameter_estimate_std) %>%
   spread(atlas, parameter_estimate_std) %>%
   rename("self_referential" = `self-referential`)
 
 merged_wide_alt = merged %>%
   filter(atlas %in% c("pnas_self", "pnas_mentalizing_nopc")) %>%
-  select(site, pID, trial, topic, cond, value, self_relevance, social_relevance, atlas, parameter_estimate_std) %>%
+  select(site, pID, trial, topic, cond, value, self_relevance, self_relevance_z, social_relevance, social_relevance_z, atlas, parameter_estimate_std) %>%
   spread(atlas, parameter_estimate_std) %>%
   rename("self_referential" = pnas_self,
          "mentalizing" = pnas_mentalizing_nopc) 
@@ -212,36 +219,35 @@ summary(mod_h1b)
 
 ### combined plot
 ```{r}
-predicted = ggeffects::ggpredict(mod_h1a, c("self_referential [-4.5:5]")) %>%
+vals = seq(-4.5,4.5,.1)
+predicted_h1 = ggeffects::ggpredict(mod_h1a, c("self_referential [vals]")) %>%
   data.frame() %>%
   mutate(roi = "self-referential",
          variable = "self-relevance") %>%
-  bind_rows(ggeffects::ggpredict(mod_h1b, c("mentalizing [-4.5:5]")) %>%
+  bind_rows(ggeffects::ggpredict(mod_h1b, c("mentalizing [vals]")) %>%
               data.frame() %>%
               mutate(roi = "mentalizing",
                      variable = "social relevance"))
 
-ind_data = merged_wide %>%
-  select(pID, trial, contains("relevance"), mentalizing, self_referential) %>%
-  rename("self-referential" = self_referential) %>%
-  gather(variable, predicted, contains("relevance")) %>%
-  mutate(variable = gsub("self_relevance", "self-relevance", variable),
-         variable = gsub("social_relevance", "social relevance", variable)) %>%
-  gather(roi, x, mentalizing, `self-referential`) %>%
-  filter(!(variable == "self-relevance" & roi == "mentalizing") & ! (variable == "social relevance" & roi == "self-referential"))
+predicted_sub_h1 = ggeffects::ggpredict(mod_h1a, terms = c("self_referential [vals]", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(roi = "self-referential",
+         variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h1b, c("mentalizing [vals]", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(roi = "mentalizing",
+                     variable = "social relevance"))
 
-(plot_h1 = predicted %>%
+predicted_h1 %>%
   ggplot(aes(x, predicted)) +
-  stat_smooth(data = ind_data, aes(group = pID, color = roi), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = roi), alpha = .3, color = NA) +
+  stat_smooth(data = predicted_sub_h1, aes(group = group, color = roi), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = roi), alpha = .5, color = NA) +
   geom_line(aes(color = roi), size = 2) +
   facet_grid(~variable) +
   scale_color_manual(name = "", values = palette_roi, guide = FALSE) +
   scale_fill_manual(name = "", values = palette_roi, guide = FALSE) +
   labs(x = "\nROI activity (SD)", y = "predicted rating\n") +
-  plot_aes  +
-  theme(legend.position = "top",
-        legend.key.width=unit(2,"cm")))
+  plot_aes
 ```
 
 ## H4 {.tabset}
@@ -308,20 +314,18 @@ predicted_h4 = ggeffects::ggpredict(mod_h4a, c("cond")) %>%
   mutate(x = factor(x, levels = c("self", "control", "other")),
          atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
 
-ind_data_h4 = merged %>%
-  mutate(atlas = recode(atlas, "pnas_self" = "self-referential",
-                        "pnas_mentalizing_nopc" = "mentalizing")) %>%
-  filter(atlas %in% c("self-referential", "mentalizing")) %>%
-  select(pID, cond, run, trial, atlas, parameter_estimate_std) %>%
-  unique() %>%
-  rename("x" = cond,
-         "predicted" = parameter_estimate_std) %>%
+predicted_sub_h4 = ggeffects::ggpredict(mod_h4a, terms = c("cond", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(atlas = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h4b, c("cond", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(atlas = "mentalizing")) %>%
   mutate(x = factor(x, levels = c("self", "control", "other")),
          atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
 
-(plot_h4 = predicted_h4 %>%
+predicted_h4 %>%
   ggplot(aes(x = x, y = predicted)) +
-  stat_summary(data = ind_data_h4, aes(group = pID), fun = "mean", geom = "line",
+  stat_summary(data = predicted_sub_h4, aes(group = group), fun = "mean", geom = "line",
                size = .1, color = "grey50") +
   stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1) +
   geom_pointrange(aes(color = x, ymin = conf.low, ymax = conf.high), size = .75) +
@@ -329,8 +333,7 @@ ind_data_h4 = merged %>%
   scale_color_manual(name = "", values = palette_condition, guide = "none") +
   scale_alpha_manual(name = "", values = c(1, .5)) +
   labs(x = "", y = "ROI activity (SD)\n") +
-  plot_aes +
-  theme(legend.position = c(.85, .15)))
+  plot_aes
 ```
 
 ## H6 {.tabset}
@@ -397,16 +400,17 @@ predicted_h6 = ggeffects::ggpredict(mod_h6a, c("self_referential [vals]")) %>%
               mutate(roi = "mentalizing")) %>%
   mutate(roi = factor(roi, levels = c("self-referential", "mentalizing")))
 
-ind_data_h6 = merged %>%
-  select(pID, cond, run, trial, atlas, parameter_estimate_std, value) %>%
-  rename("x" = parameter_estimate_std,
-         "predicted" = value,
-         "roi" = atlas) %>%
+predicted_sub_h6 = ggeffects::ggpredict(mod_h6a, terms = c("self_referential [vals]", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(roi = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h6b, c("mentalizing [vals]", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(roi = "mentalizing")) %>%
   mutate(roi = factor(roi, levels = c("self-referential", "mentalizing")))
 
 predicted_h6 %>%
   ggplot(aes(x = x, y = predicted, color = roi, fill = roi)) +
-  stat_smooth(data = ind_data_h6, aes(group = pID), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  stat_smooth(data = predicted_sub_h6, aes(group = group), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2, color = NA) +
   geom_line(size = 2) +
   facet_grid(~roi) +
@@ -427,22 +431,21 @@ predicted_h6 %>%
 source("indirectMLM.R")
 
 # create self condition dataframe
-data_med_self = merged %>%
-  filter(!cond == "other" & atlas == "self-referential") %>%
+data_med_self = merged_wide_alt %>%
+  filter(!cond == "other") %>%
   mutate(cond = ifelse(cond == "self", 1, 0)) %>%
-  select(pID, site, trial, cond, value, parameter_estimate) %>%
+  select(pID, site, trial, cond, value, self_referential) %>%
   data.frame()
 
 # create social condition dataframe
-data_med_other = merged %>%
-  filter(!cond == "self" & atlas == "mentalizing") %>%
+data_med_other = merged_wide_alt %>%
+  filter(!cond == "self") %>%
   mutate(cond = ifelse(cond == "other", 1, 0)) %>%
-  select(pID, site, trial, cond, value, parameter_estimate) %>%
+  select(pID, site, trial, cond, value, mentalizing) %>%
   data.frame()
 
 # define variables
 y_var = "value"
-m_var = "parameter_estimate"
 ```
 
 ### self condition {.tabset}
@@ -457,7 +460,7 @@ if (file.exists(sprintf("models/model_%s_alternative.RDS", model_name))) {
   assign(get("model_name"), readRDS(sprintf("models/model_%s_alternative.RDS", model_name)))
 } else {
   assign(get("model_name"), boot(data = data, statistic = indirect.mlm, R = 500,
-                                 y = y_var, x = "cond", mediator = m_var, group.id = "pID",
+                                 y = y_var, x = "cond", mediator = "self_referential", group.id = "pID",
                                  between.m = F, uncentered.x = F))
   saveRDS(eval(parse(text = model_name)), sprintf("models/model_%s_alternative.RDS", model_name))
 }
@@ -477,7 +480,7 @@ if (file.exists(sprintf("models/model_%s_alternative.RDS", model_name))) {
   assign(get("model_name"), readRDS(sprintf("models/model_%s_alternative.RDS", model_name)))
 } else {
   assign(get("model_name"), boot(data = data, statistic = indirect.mlm, R = 500,
-                                 y = y_var, x = "cond", mediator = m_var, group.id = "pID",
+                                 y = y_var, x = "cond", mediator = "mentalizing", group.id = "pID",
                                  between.m = F, uncentered.x = F))
   saveRDS(eval(parse(text = model_name)), sprintf("models/model_%s_alternative.RDS", model_name))
 }
@@ -515,23 +518,23 @@ There is a main effect of topic, such that health articles elicited greater acti
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h1a =  lmer(self_relevance ~ self_referential * topic + (1 | pID),
+mod_h1am =  lmer(self_relevance ~ self_referential * topic + (1 + topic | pID),
                data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h1a = table_model(mod_h1a)
+table_h1am = table_model(mod_h1am)
 
-table_h1a %>%
+table_h1am %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h1a)
+summary(mod_h1am)
 ```
 
 ### mentalizing ROI {.tabset}
@@ -541,58 +544,60 @@ There is a main effect of topic, such that health articles elicited greater acti
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h1b = lmer(social_relevance ~ mentalizing * topic + (1 + mentalizing | pID),
+mod_h1bm = lmer(social_relevance ~ mentalizing * topic + (1 + mentalizing | pID),
                data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h1b = table_model(mod_h1b)
+table_h1bm = table_model(mod_h1bm)
 
-table_h1b %>%
+table_h1bm %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h1b)
+summary(mod_h1bm)
 ```
 
 ### combined plot
 ```{r}
-predicted = ggeffects::ggpredict(mod_h1a, c("self_referential [-4.5:5]", "topic")) %>%
+vals = seq(-4.5,4.5,.1)
+
+predicted_h1m = ggeffects::ggpredict(mod_h1am, c("self_referential [vals]", "topic")) %>%
   data.frame() %>%
   mutate(roi = "self-referential",
          variable = "self-relevance") %>%
-  bind_rows(ggeffects::ggpredict(mod_h1b, c("mentalizing [-4.5:5]", "topic")) %>%
+  bind_rows(ggeffects::ggpredict(mod_h1bm, c("mentalizing [vals]", "topic")) %>%
               data.frame() %>%
               mutate(roi = "mentalizing",
                      variable = "social relevance"))
 
-ind_data = merged_wide %>%
-  select(topic, pID, trial, contains("relevance"), mentalizing, self_referential) %>%
-  rename("self-referential" = self_referential,
-         "group" = topic) %>%
-  gather(variable, predicted, contains("relevance")) %>%
-  mutate(variable = gsub("self_relevance", "self-relevance", variable),
-         variable = gsub("social_relevance", "social relevance", variable)) %>%
-  gather(roi, x, mentalizing, `self-referential`) %>%
-  filter(!(variable == "self-relevance" & roi == "mentalizing") & ! (variable == "social relevance" & roi == "self-referential"))
 
-(plot_h1 = predicted %>%
+predicted_sub_h1m = ggeffects::ggpredict(mod_h1am, terms = c("self_referential [vals]", "topic", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(roi = "self-referential",
+         variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h1bm, c("mentalizing [vals]", "topic", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(roi = "mentalizing",
+                     variable = "social relevance")) 
+
+predicted_h1m %>%
   ggplot(aes(x, predicted, color = group, fill = group)) +
-  stat_smooth(data = ind_data, aes(group = interaction(pID, group)), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  stat_smooth(data = predicted_sub_h1m, aes(group = interaction(group, facet)),
+              geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .3, color = NA) +
   geom_line(size = 2) +
   facet_grid(~variable) +
   scale_color_manual(name = "", values = palette_topic) +
   scale_fill_manual(name = "", values = palette_topic) +
   labs(x = "\nROI activity (SD)", y = "predicted rating\n") +
-  plot_aes  +
-  theme(legend.position = "top",
-        legend.key.width=unit(2,"cm")))
+  plot_aes +
+  theme(legend.key.width=unit(2,"cm"))
 ```
 
 ## H2 {.tabset}
@@ -604,23 +609,23 @@ There is a main effect of topic such that health articles are rated as more self
 The was also an interaction such that the effect of the self-focused condition on self-relevance was weaker for health articles.
 
 ```{r}
-mod_h2a = lmer(self_relevance ~ cond * topic + (1 | pID),
+mod_h2am = lmer(self_relevance ~ cond * topic + (1 + topic | pID),
                data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h2a = table_model(mod_h2a)
+table_h2am = table_model(mod_h2am)
 
-table_h2a %>%
+table_h2am %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h2a)
+summary(mod_h2am)
 ```
 
 ### social relevance {.tabset}
@@ -630,54 +635,54 @@ There is a main effect of topic such that health articles are rated as more soci
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h2b = lmer(social_relevance ~ cond * topic + (1 | pID),
+mod_h2bm = lmer(social_relevance ~ cond * topic + (1 + topic | pID),
                data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h2b = table_model(mod_h2b)
+table_h2bm = table_model(mod_h2bm)
 
-table_h2b %>%
+table_h2bm %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h2b)
+summary(mod_h2bm)
 ```
 
 ### combined plot
 ```{r}
-predicted_h2 = ggeffects::ggpredict(mod_h2a, c("cond", "topic")) %>%
+predicted_h2m = ggeffects::ggpredict(mod_h2am, c("cond", "topic")) %>%
   data.frame() %>%
   mutate(model = "self-relevance") %>%
-  bind_rows(ggeffects::ggpredict(mod_h2b, c("cond", "topic")) %>%
+  bind_rows(ggeffects::ggpredict(mod_h2bm, c("cond", "topic")) %>%
               data.frame() %>%
               mutate(model = "social relevance")) %>%
   mutate(x = factor(x, levels = c("self", "control", "other")))
 
-ind_data_h2 = merged_wide %>%
-  rename("x" = cond,
-         "group" = topic) %>%
-  gather(model, predicted, self_relevance, social_relevance) %>%
-  mutate(x = factor(x, levels = c("self", "control", "other")),
-         model = gsub("self_relevance", "self-relevance", model),
-         model = gsub("social_relevance", "social relevance", model))
+predicted_sub_h2m = ggeffects::ggpredict(mod_h2am, terms = c("cond", "topic", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(model = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h2bm, c("cond", "topic", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(model = "social relevance")) %>%
+  mutate(x = factor(x, levels = c("self", "control", "other"))) 
   
-(plot_h2 = predicted_h2 %>%
+predicted_h2m %>%
   ggplot(aes(x = x, y = predicted, color = group)) +
-  stat_summary(data = ind_data_h2, aes(group = interaction(pID, group)), fun = "mean", geom = "line", size = .1) +
-  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1, position = position_dodge(.1)) +
+  stat_summary(data = predicted_sub_h2m, aes(group = interaction(group, facet)), fun = "mean", geom = "line", size = .1, alpha = .5) +
+  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1) +
   geom_pointrange(aes(ymin = conf.low, ymax = conf.high, group = group),
-                  size = .75, position = position_dodge(.1)) +
+                  size = .75) +
   facet_grid(~model) +
   scale_color_manual(name = "", values = palette_topic) +
   labs(x = "", y = "predicted rating\n") +
   plot_aes +
-  theme(legend.position = c(.85, .15)))
+  theme(legend.position = c(.85, .15))
 ```
 
 ## H3 {.tabset}
@@ -689,52 +694,53 @@ The relationship between self-relevance and sharing intentions was not moderated
 However, the relationship between social relevance and sharing intentions was slightly stronger for health articles compared to climate articles.
 
 ```{r}
-mod_h3 = lmer(value ~ self_relevance * topic + social_relevance * topic + (1 + self_relevance + social_relevance | pID),
+mod_h3m = lmer(value ~ self_relevance_z * topic + social_relevance_z * topic + (1 + self_relevance_z + social_relevance_z | pID),
               data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 ### plot
 ```{r}
-predicted = ggeffects::ggpredict(mod_h3, c("self_relevance", "topic")) %>%
+predicted_h3m = ggeffects::ggpredict(mod_h3m, c("self_relevance_z", "topic")) %>%
   data.frame() %>%
   mutate(variable = "self-relevance") %>%
-  bind_rows(ggeffects::ggpredict(mod_h3, c("social_relevance", "topic")) %>%
+  bind_rows(ggeffects::ggpredict(mod_h3m, c("social_relevance_z", "topic")) %>%
               data.frame() %>%
               mutate(variable = "social relevance"))
 
-points = merged_wide %>%
-  rename("self-referential" = self_referential,
-         "predicted" = value,
-         "group" = topic) %>%
-  gather(variable, x, contains("relevance")) %>%
-  mutate(variable = gsub("self_relevance", "self-relevance", variable),
-         variable = gsub("social_relevance", "social relevance", variable))
+predicted_sub_h3m = ggeffects::ggpredict(mod_h3m, terms = c("self_relevance_z", "topic", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h3m, c("social_relevance_z", "topic", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(variable = "social relevance"))
 
-(plot_rel_sharing = predicted %>%
+predicted_h3m %>%
   ggplot(aes(x, predicted, color = group, fill = group)) +
-  stat_smooth(data = points, aes(group = interaction(pID, group)), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2, color = NA) +
+  stat_smooth(data = predicted_sub_h3m, aes(group = interaction(group, facet)),
+              geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .3, color = NA) +
   geom_line(size = 2) +
   facet_grid(~variable) +
   scale_color_manual(name = "", values = palette_topic) +
   scale_fill_manual(name = "", values = palette_topic) +
-  labs(x = "\nrating", y = "predicted sharing intention\n") +
-  plot_aes)
+  labs(x = "\nrating (SD)", y = "predicted sharing intention\n") +
+  plot_aes +
+  theme(legend.key.width=unit(2,"cm"))
 ```
 
 ### model table
 ```{r}
-table_h3 = table_model(mod_h3)
+table_h3m = table_model(mod_h3m)
 
-table_h3 %>%
+table_h3m %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 ### summary
 ```{r}
-summary(mod_h3)
+summary(mod_h3m)
 ```
 
 ## H4 {.tabset}
@@ -748,23 +754,23 @@ There is a main effect of topic, such that health articles elicited greater acti
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h4a = lmer(self_referential ~ cond * topic + (1 + cond | pID),
+mod_h4am = lmer(self_referential ~ cond * topic + (1 + cond + topic | pID),
               data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h4a = table_model(mod_h4a)
+table_h4am = table_model(mod_h4am)
 
-table_h4a %>%
+table_h4am %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h4a)
+summary(mod_h4am)
 ```
 
 ### mentalizing ROI {.tabset}
@@ -774,49 +780,48 @@ There is a main effect of topic, such that health articles elicited greater acti
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h4b = lmer(mentalizing ~ cond * topic + (1 + cond | pID),
+mod_h4bm = lmer(mentalizing ~ cond * topic + (1 + cond + topic | pID),
               data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h4b = table_model(mod_h4b)
+table_h4bm = table_model(mod_h4bm)
 
-table_h4b %>%
+table_h4bm %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h4b)
+summary(mod_h4bm)
 ```
 
 ### combined plot
 ```{r}
-predicted_h4 = ggeffects::ggpredict(mod_h4a, c("cond", "topic")) %>%
+predicted_h4m = ggeffects::ggpredict(mod_h4am, c("cond", "topic")) %>%
   data.frame() %>%
   mutate(atlas = "self-referential") %>%
-  bind_rows(ggeffects::ggpredict(mod_h4b, c("cond", "topic")) %>%
+  bind_rows(ggeffects::ggpredict(mod_h4bm, c("cond", "topic")) %>%
               data.frame() %>%
               mutate(atlas = "mentalizing")) %>%
   mutate(x = factor(x, levels = c("self", "control", "other")),
          atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
 
-ind_data_h4 = merged %>%
-  filter(atlas %in% c("self-referential", "mentalizing")) %>%
-  select(topic, pID, cond, run, trial, atlas, parameter_estimate_std) %>%
-  unique() %>%
-  rename("x" = cond,
-         "predicted" = parameter_estimate_std,
-         "group" = topic) %>%
+predicted_sub_h4m = ggeffects::ggpredict(mod_h4am, terms = c("cond", "topic", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(atlas = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h4bm, c("cond", "topic", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(atlas = "mentalizing")) %>%
   mutate(x = factor(x, levels = c("self", "control", "other")),
          atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
 
-(plot_h4 = predicted_h4 %>%
+predicted_h4m %>%
   ggplot(aes(x = x, y = predicted, color = group)) +
-  stat_summary(data = ind_data_h4, aes(group = interaction(pID, group)), fun = "mean", geom = "line", size = .1) +
+  stat_summary(data = predicted_sub_h4m, aes(group = interaction(group, facet)), fun = "mean", geom = "line", size = .1) +
   stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1, position = position_dodge(.1)) +
   geom_pointrange(aes(ymin = conf.low, ymax = conf.high, group = group),
                   size = .75, position = position_dodge(.1)) +
@@ -824,7 +829,7 @@ ind_data_h4 = merged %>%
   scale_color_manual(name = "", values = palette_topic) +
   labs(x = "", y = "ROI activity (SD)\n") +
   plot_aes +
-  theme(legend.position = c(.85, .15)))
+  theme(legend.position = c(.18, .95))
 ```
 
 ## H5 {.tabset}
@@ -835,29 +840,27 @@ There is a main effect of topic, such that health articles have higher sharing i
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h5 = lmer(value ~ cond * topic + (1 | pID),
+mod_h5m = lmer(value ~ cond * topic + (1 + cond + topic | pID),
               data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 ### plot
 ```{r}
-predicted_h5 = ggeffects::ggpredict(mod_h5, c("cond", "topic")) %>%
+predicted_h5m = ggeffects::ggpredict(mod_h5m, c("cond", "topic")) %>%
   data.frame() %>%
   mutate(x = factor(x, levels = c("self", "control", "other")))
 
-ind_data_h5 = merged_wide %>%
-  rename("x" = cond,
-         "predicted" = value,
-         "group" = topic) %>%
+predicted_sub_h5m = ggeffects::ggpredict(mod_h5m, terms = c("cond", "topic", "pID"), type = "random") %>%
+  data.frame() %>%
   mutate(x = factor(x, levels = c("self", "control", "other")))
   
-predicted_h5 %>%
+predicted_h5m %>%
   ggplot(aes(x = x, y = predicted, color = group)) +
-  stat_summary(data = ind_data_h5, aes(group = interaction(pID, group)), fun = "mean", geom = "line", size = .1) +
-  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1, position = position_dodge(.1)) +
+  stat_summary(data = predicted_sub_h5m, aes(group = interaction(group, facet)), fun = "mean", geom = "line", size = .1) +
+  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1) +
   geom_pointrange(aes(ymin = conf.low, ymax = conf.high, group = group),
-                  size = .75, position = position_dodge(.1)) +
+                  size = .75) +
   scale_color_manual(name = "", values = palette_topic) +
   labs(x = "", y = "predicted sharing intention\n") +
   plot_aes +
@@ -867,16 +870,16 @@ predicted_h5 %>%
 
 ### model table
 ```{r}
-table_h5 = table_model(mod_h5)
+table_h5m = table_model(mod_h5m)
 
-table_h5 %>%
+table_h5m %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 ### summary
 ```{r}
-summary(mod_h5)
+summary(mod_h5m)
 ```
 
 ## H6 {.tabset}
@@ -890,23 +893,23 @@ There is a main effect of topic, such that health articles have higher sharing i
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h6a = lmer(value ~ self_referential * topic + (1 + self_referential | pID),
+mod_h6am = lmer(value ~ self_referential * topic + (1 + self_referential + topic | pID),
               data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h6a = table_model(mod_h6a)
+table_h6am = table_model(mod_h6am)
 
-table_h6a %>%
+table_h6am %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h6a)
+summary(mod_h6am)
 ```
 
 ### mentalizing ROI {.tabset}
@@ -916,70 +919,71 @@ There is a main effect of topic, such that health articles have higher sharing i
 These data are not consistent with moderation by topic.
 
 ```{r}
-mod_h6b = lmer(value ~ mentalizing * topic + (1 + mentalizing | pID),
+mod_h6bm = lmer(value ~ mentalizing * topic + (1 + topic | pID),
               data = merged_wide,
               control = lmerControl(optimizer = "bobyqa"))
 ```
 
 #### model table
 ```{r}
-table_h6b = table_model(mod_h6b)
+table_h6bm = table_model(mod_h6bm)
 
-table_h6b %>%
+table_h6bm %>%
     kable()  %>%
     kableExtra::kable_styling()
 ```
 
 #### summary
 ```{r}
-summary(mod_h6b)
+summary(mod_h6bm)
 ```
 
 ### combined plot
 ```{r}
 vals = seq(-4.5,4.5,.1)
 
-predicted_h6 = ggeffects::ggpredict(mod_h6a, c("self_referential [vals]", "topic")) %>%
+predicted_h6m = ggeffects::ggpredict(mod_h6am, c("self_referential [vals]", "topic")) %>%
   data.frame() %>%
   mutate(atlas = "self-referential") %>%
-  bind_rows(ggeffects::ggpredict(mod_h6b, c("mentalizing [vals]", "topic")) %>%
+  bind_rows(ggeffects::ggpredict(mod_h6bm, c("mentalizing [vals]", "topic")) %>%
               data.frame() %>%
               mutate(atlas = "mentalizing")) %>%
   mutate(atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
 
-ind_data_h6 = merged %>%
-  filter(atlas %in% c("self-referential", "mentalizing")) %>%
-  select(topic, pID, cond, run, trial, atlas, parameter_estimate_std, value) %>%
-  rename("x" = parameter_estimate_std,
-         "predicted" = value,
-         "group" = topic) %>%
-  mutate(atlas = factor(atlas, levels = c("self-referential", "mentalizing")))
+predicted_sub_h6m = ggeffects::ggpredict(mod_h6am, terms = c("self_referential [vals]", "topic", "pID"), type = "random") %>%
+  data.frame() %>%
+  mutate(roi = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h6bm, c("mentalizing [vals]", "topic", "pID"), type = "random") %>%
+              data.frame() %>%
+              mutate(roi = "mentalizing")) %>%
+  mutate(roi = factor(roi, levels = c("self-referential", "mentalizing")))
 
-predicted_h6 %>%
+predicted_h6m %>%
   ggplot(aes(x = x, y = predicted, color = group, fill = group)) +
-  stat_smooth(data = ind_data_h6, aes(group = interaction(pID, group)), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2, color = NA) +
+  stat_smooth(data = predicted_sub_h6m, aes(group = interaction(group, facet)),
+              geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .3, color = NA) +
   geom_line(size = 2) +
   facet_grid(~atlas) +
   scale_color_manual(name = "", values = palette_topic) +
   scale_fill_manual(name = "", values = palette_topic) +
   labs(y = "predicted sharing intention\n", x = "\nROI activity (SD)") +
   plot_aes +
-  theme(legend.position = "top")
+  theme(legend.key.width=unit(2,"cm"))
 ```
 
 ## combined table
 ```{r}
-table_h1a %>% mutate(DV = "H1a: Self-relevance") %>%
-  bind_rows(table_h1b %>% mutate(DV = "H1b: Social relevance")) %>%
-  bind_rows(table_h2a %>% mutate(DV = "H2a: Self-relevance")) %>%
-  bind_rows(table_h2b %>% mutate(DV = "H2b: Social relevance")) %>%
-  bind_rows(table_h3 %>% mutate(DV = "H3a-b: Sharing intention")) %>%
-  bind_rows(table_h4a %>% mutate(DV = "H4a: Self-referential ROI")) %>%
-  bind_rows(table_h4b %>% mutate(DV = "H4b: Mentalizing ROI")) %>%
-  bind_rows(table_h5 %>% mutate(DV = "H5: Sharing intention")) %>%
-  bind_rows(table_h6a %>% mutate(DV = "H6a: Sharing intention")) %>%
-  bind_rows(table_h6b %>% mutate(DV = "H6b: Sharing intention")) %>%
+table_h1am %>% mutate(DV = "H1a: Self-relevance") %>%
+  bind_rows(table_h1bm %>% mutate(DV = "H1b: Social relevance")) %>%
+  bind_rows(table_h2am %>% mutate(DV = "H2a: Self-relevance")) %>%
+  bind_rows(table_h2bm %>% mutate(DV = "H2b: Social relevance")) %>%
+  bind_rows(table_h3m %>% mutate(DV = "H3a-b: Sharing intention")) %>%
+  bind_rows(table_h4am %>% mutate(DV = "H4a: Self-referential ROI")) %>%
+  bind_rows(table_h4bm %>% mutate(DV = "H4b: Mentalizing ROI")) %>%
+  bind_rows(table_h5m %>% mutate(DV = "H5: Sharing intention")) %>%
+  bind_rows(table_h6am %>% mutate(DV = "H6a: Sharing intention")) %>%
+  bind_rows(table_h6bm %>% mutate(DV = "H6b: Sharing intention")) %>%
   select(DV, everything()) %>%
   kable() %>%
   kable_styling()

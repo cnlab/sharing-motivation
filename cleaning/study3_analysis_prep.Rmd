@@ -1,0 +1,133 @@
+---
+title: "Study 3 Prep"
+author: ""
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen=999)
+```
+
+This script tidies and prepares the cleaned data from Study 3.
+
+# load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse)
+```
+
+# prep data {.tabset}
+```{r}
+# load article text
+articles = read.csv("~/Library/CloudStorage/Box-Box/BB-PRIME_Data_834294/CACI/article-information.csv", stringsAsFactors = FALSE) %>%
+  rename("article_number" = Article.ID)
+
+# load data
+data = read.csv("~/Library/CloudStorage/Box-Box/BB-PRIME_Data_834294/CACI/BBPrime 7.2023 UPENN dataset deidentified.csv", stringsAsFactors = FALSE) %>%
+  unique() %>%
+  group_by(SubjectID) %>%
+  mutate(n_articles = n(),
+         Condition = recode(Condition, "1" = "self", "2" = "other", "3" = "control")) %>%
+  gather(sharing_type, msg_share, contains("Intention")) %>%
+  mutate(sharing_type = recode(sharing_type, "BroadcastingIntention" = 1, "NarrowcastingIntention" = 0),
+         sharing_type_key = ifelse(sharing_type == 1, "msg_share_broad", "msg_share_narrow"),
+         ArticleTopic = recode(ArticleTopic, "wellness" = "health"),
+         comment = ifelse(SelfPrompt_RESP == " " & SocialPrompt_RESP == " ", ControlPrompt_RESP,
+                ifelse(SelfPrompt_RESP == " " & ControlPrompt_RESP == " ", SocialPrompt_RESP, SelfPrompt_RESP)),
+         SubjectID = sprintf("s%03d", SubjectID)) %>%
+  rename("msg_rel_self" = SelfRelevance,
+         "msg_rel_social" = SocialRelevance,
+         "article_cond" = Condition,
+         "SID" = SubjectID,
+         "topic" = ArticleTopic,
+         "article_number" = ArticleID) %>%
+  select(-contains("Prompt")) %>%
+  ungroup() %>%
+  left_join(., articles) %>%
+  mutate(check = ifelse(Article.Title == comment, 1, 0))
+
+# identify outliers 3 SD from the median
+n_articles = data %>%
+  select(SID, n_articles) %>%
+  unique() %>%
+  ungroup() %>%
+  mutate(median = median(n_articles, na.rm = TRUE),
+         sd = sd(n_articles, na.rm = TRUE),
+         outlier = case_when(n_articles > median + 3*sd ~ 1)) %>%
+  filter(outlier == 1)
+
+outlier_ids = n_articles$SID
+
+# get word counts
+n_words = data %>%
+  filter(sharing_type == 1) %>%
+  group_by(article_cond, SID, article_number) %>%
+  tidytext::unnest_tokens(word, comment) %>%
+  summarize(n_words = n())
+
+data_trimmed = data %>%
+  left_join(., n_words) %>%
+  filter(!SID %in% outlier_ids) %>% #filter out outliers
+  filter(!grepl("N/A", comment)) %>% #filter out N/A responses
+  filter(n_words > 5) %>% #filter out word counts less of 5 or less
+  filter(check == 0)
+```
+
+# n messages excluded
+```{r}
+data %>%
+  left_join(., n_words) %>%
+  select(SID, article_number, comment, n_words) %>%
+  unique() %>%
+  filter(!is.na(comment)) %>%
+  ungroup() %>%
+  mutate(n_comments = n()) %>%
+  filter(n_words < 6) %>% #filter out N/A responses and word counts less of 5 or less
+  mutate(percent = round((n() / n_comments) * 100, 1))
+
+data %>%
+  left_join(., n_words) %>%
+  select(SID, article_number, article_cond, n_words) %>%
+  unique() %>%
+  filter(!is.na(comment)) %>%
+  filter(n_words < 6) %>%
+  group_by(article_cond) %>%
+  summarize(n = n())
+```
+
+# n people excluded {.tabset}
+## outliers
+```{r}
+length(outlier_ids)
+```
+
+## fewer than 6 words
+```{r}
+data %>%
+  select(SID) %>%
+  filter(!SID %in% data_trimmed$SID) %>%
+  filter(!SID %in% outlier_ids) %>%
+  unique()
+```
+
+# write csvs
+```{r}
+write.csv(data_trimmed, "../data/study3_data.csv", row.names = FALSE)
+```

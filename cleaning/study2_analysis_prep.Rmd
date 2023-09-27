@@ -34,14 +34,8 @@ pacman::p_load(tidyverse, tidyText)
 ```
 
 # load and tidy message data
-
-Create disaggregated dataset
-
-* Between-person variables are grand mean centered and standardized across people
-* Within-person variables are centered within-person and standardized across people
-
 ```{r}
-data_raw = read.csv("../data/raw/study2_long.csv", stringsAsFactors = FALSE)
+data_raw = read.csv("../data/raw/study2_data.csv", stringsAsFactors = FALSE)
 
 articles = read.csv("../stimuli/articles.csv", stringsAsFactors = FALSE) %>%
   mutate(article_number = row_number()-1)
@@ -71,7 +65,14 @@ comments = data_raw %>%
   filter(grepl("comment$", survey_name)) %>%
   extract(item, "item", "([0-9]+)_.*") %>%
   left_join(., stim_order) %>%
-  left_join(., cond_order)
+  left_join(., cond_order) %>%
+  rename("comment" = value) %>%
+  select(-survey_name)
+
+n_words = comments %>%
+  group_by(article_cond, SID, item) %>%
+  tidytext::unnest_tokens(word, comment) %>%
+  summarize(n_words = n())
 
 messages = data_raw %>%
   filter(grepl("sharing|relevance_self|relevance_social", survey_name)) %>%
@@ -81,57 +82,47 @@ messages = data_raw %>%
          survey_name = gsub("relevance", "rel", survey_name),
          survey_name = sprintf("msg_%s", survey_name)) %>%
   left_join(., stim_order) %>%
-  left_join(., cond_order)
+  left_join(., cond_order) %>%
+  left_join(., comments) %>%
+  left_join(., n_words) %>%
+  mutate(n_words = ifelse(is.na(comment), NA, n_words))
 
-between = messages %>%
-  group_by(survey_name, SID) %>%
-  summarize(value_between = mean(value, na.rm = TRUE)) %>%
-  group_by(survey_name) %>%
-  mutate(value_between = scale(value_between, scale = TRUE, center = TRUE),
-         survey_between = sprintf("%s_between", survey_name)) %>%
-  ungroup() %>%
-  select(-survey_name) %>%
-  spread(survey_between, value_between)
-
-within = messages %>%
-  group_by(survey_name, SID) %>%
-  mutate(trial = row_number(),
-         value_within = scale(value, scale = FALSE, center = TRUE),
-         survey_name_within = sprintf("%s_within", survey_name)) %>%
-  group_by(survey_name) %>%
-  mutate(value_sd = sd(value_within, na.rm = TRUE),
-         value_within = value_within / value_sd) %>%
-  ungroup() %>%
-  select(-value, -value_sd, -survey_name) %>%
-  spread(survey_name_within, value_within)
-
-data_mod_diss = messages %>%
+data = messages %>%
   group_by(survey_name, SID) %>%
   mutate(trial = row_number()) %>%
   spread(survey_name, value) %>%
-  left_join(., between) %>%
-  left_join(., within) %>%
   ungroup() %>%
-  mutate(SID = as.factor(SID)) %>%
   unique() %>%
-  select(-msg_sharing_broad_between, -msg_sharing_broad_within, -msg_sharing_narrow_between, -msg_sharing_narrow_within) %>%
   gather(sharing_type, msg_share, contains("sharing")) %>%
-  mutate(sharing_type = ifelse(sharing_type == "msg_sharing_broad", 0, 1)) %>%
+  mutate(sharing_type_key = sharing_type, 
+         sharing_type = ifelse(sharing_type == "msg_sharing_broad", 1, 0)) %>%
   mutate(group = survey_condition) %>%
-  select(group, SID, item, article_cond, trial, topic, sharing_type, msg_share, contains("rel_"))
+  select(group, SID, item, article_cond, trial, topic, sharing_type_key, sharing_type, msg_share, contains("rel_"), comment, n_words)  %>%
+  filter(!grepl("N/A", comment)) %>% #filter out N/A responses
+  filter(is.na(n_words) | n_words > 5) #filter out word counts less of 5 or less
+```
 
-n_words = comments %>%
-  group_by(article_cond, SID, item) %>%
-  tidytext::unnest_tokens(word, value) %>%
-  summarize(n = n()) %>%
-  left_join(., select(comments, SID, item, value)) %>%
-  mutate(n = ifelse(is.na(value), NA, n)) %>%
-  rename("comment" = value)
+# n messages excluded
+```{r}
+messages %>%
+  select(SID, item, comment, n_words) %>%
+  unique() %>%
+  filter(!is.na(comment)) %>%
+  mutate(n_comments = n()) %>%
+  filter(grepl("N/A", comment) | n_words < 6) %>% #filter out N/A responses and word counts less of 5 or less
+  mutate(percent = round((n() / n_comments) * 100, 1))
+
+messages %>%
+  select(SID, item, article_cond, comment, n_words) %>%
+  unique() %>%
+  filter(grepl("N/A", comment) | n_words < 6) %>%
+  group_by(article_cond) %>%
+  summarize(n = n())
 ```
 
 # tidy demographic data
 ```{r}
-demo = read.csv("../data/study2_demo.csv", stringsAsFactors = FALSE) %>%
+demo = read.csv("../data/raw/study2_demo.csv", stringsAsFactors = FALSE) %>%
   filter(grepl("gender|race|hispanic_latinx|ses_degree|income_household|^age$|state", item)) %>%
   ungroup() %>%
   select(SID, item, value) %>%
@@ -160,16 +151,13 @@ demo = read.csv("../data/study2_demo.csv", stringsAsFactors = FALSE) %>%
          item = gsub("hispanic_latinx", "Hispanic or Latinx", item)) %>%
   spread(item, value) %>%
   mutate(race = ifelse(is.na(race), race_self, race),
-         gender = ifelse(gender == "Prefer to self-describe", gender_4_TEXT, gender),
-         study = "study 6",
-         SID = sprintf("%s_%s", study, SID)) %>%
-  gather(item, value, -SID, -study)
+         gender = ifelse(gender == "Prefer to self-describe", gender_4_TEXT, gender)) %>%
+  gather(item, value, -SID)
 ```
 
 # write csvs
 ```{r}
-write.csv(data_mod_diss, "../data/study2_data.csv", row.names = FALSE)
+write.csv(data, "../data/study2_data.csv", row.names = FALSE)
 write.csv(demo, "../data/study2_demo.csv", row.names = FALSE)
-write.csv(n_words, "../data/study2_n_words.csv", row.names = FALSE)
 ```
 

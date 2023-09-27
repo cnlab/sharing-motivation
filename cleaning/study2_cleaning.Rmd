@@ -105,7 +105,7 @@ surveys = survey_raw %>%
   filter(failed_screener == 0) %>% # remove participants who failed screener
   filter(testJS == 1) %>% # remove failed tests
   filter(!`Prolific ID` == "") %>% # remove test responses
-  filter(Progress >= 40) %>% # remove people who didn't go beyond the practice round
+  filter(Progress > 41) %>% # remove people who didn't go beyond the practice round
   rename("state_code" = state) %>%
   left_join(., states, by = "state_code") %>% # replace state code with name
   select(-state_code) %>%
@@ -152,7 +152,8 @@ surveys_clean = surveys %>%
   #filter(!SID %in% failed_subs$SID) %>% # exclude participants
   filter(!item %in% c("PROLIFIC_PID", "Prolific ID")) %>% #remove MIDs 
   select(survey_condition, SID, survey_name, item, value) %>%
-  filter(grepl("relevance_self|relevance_social|sharing|stim_order|cond_order|gender|race|hispanic_latinx|ses_degree|income_household|^age$|state|comment", item)) # filter relevant variables
+  filter(grepl("relevance_self|relevance_social|sharing|stim_order|cond_order|gender|race|hispanic_latinx|ses_degree|income_household|^age$|state|comment", item)) %>% # filter relevant variables
+  filter(!grepl("practice|Practice", item))
 
 # spread to wide format
 surveys_clean_wide = surveys_clean %>%
@@ -178,7 +179,7 @@ surveys_clean %>%
 # write csvs
 ```{r}
 write.csv(filter(surveys_clean, !grepl("gender|race|hispanic_latinx|ses_degree|income_household|^age$|state", item)),
-          "../data/study2_long.csv", row.names = FALSE)
+          "../data/raw/study2_data.csv", row.names = FALSE)
 write.csv(filter(surveys_clean, grepl("gender|race|hispanic_latinx|ses_degree|income_household|^age$|state", item)),
-          "../data/study2_demo.csv", row.names = FALSE)
+          "../data/raw/study2_demo.csv", row.names = FALSE)
 ```

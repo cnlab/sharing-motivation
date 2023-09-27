@@ -1,0 +1,707 @@
+---
+title: "Behavioral study 2 analyses"
+author: "Dani Cosme"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, dpi = 300)
+options(scipen = 999)
+set.seed(65)
+```
+
+In this report, we reproduce the analyses in the follow-up behavioral study 2.
+
+# prep data {.tabset}
+First, we load the relevant packages, define functions and plotting aesthetics, and load and tidy the data.
+
+## load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, parameters, kableExtra, boot, devtools, EMAtools, install = TRUE)
+devtools::install_github("hadley/emo")
+```
+
+## define functions
+```{r}
+# MLM results table function
+table_model = function(model_data, eff_size = FALSE, word_count = TRUE) {
+  
+  results = model_data %>%
+    broom.mixed::tidy(conf.int = TRUE) %>%
+    filter(effect == "fixed") %>%
+    rename("SE" = std.error,
+           "t" = statistic,
+           "p" = p.value) %>%
+    select(-group, -effect) %>%
+    mutate_at(vars(-contains("term"), -contains("p")), round, 2) %>%
+    mutate(term = gsub("article_cond", "", term),
+           term = gsub("\\(Intercept\\)", "control", term),
+           term = gsub("sharing_type", "sharing type", term),
+           term = gsub("msg_rel_self_z", "self-relevance", term),
+           term = gsub("msg_rel_social_z", "social relevance", term),
+           term = gsub("conditiontimed", "group (timed)", term),
+           term = gsub("conditionuntimed", "group (untimed)", term),
+           term = gsub("contentclimate", "content (climate)", term),
+           term = gsub("siteUSA", "sample (USA)", term),
+           term = gsub("n_c", "word count", term),
+           term = gsub(":", " x ", term),
+           p = ifelse(p < .001, "< .001",
+               ifelse(p > .999, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
+           `b [95% CI]` = sprintf("%.2f [%0.2f, %.2f]", estimate, conf.low, conf.high)) 
+  
+  if (word_count == TRUE) {
+    results = results %>%
+      mutate(term = gsub("control", "intercept", term))
+  }
+  
+  if (eff_size == TRUE) {
+    eff_size = lme.dscore(model_data, data = data, type = "lme4") %>%
+      rownames_to_column(var = "term") %>%
+      mutate(term = gsub("article_cond", "", term),
+             term = gsub("article_cond", "", term),
+             term = gsub("\\(Intercept\\)", "control", term),
+             term = gsub("sharing_type", "sharing type", term),
+             term = gsub("msg_rel_self_between", "self-relevance", term),
+             term = gsub("msg_rel_social_between", "social relevance", term),
+             term = gsub("contentclimate", "content (climate)", term),
+             term = gsub(":", " x ", term),
+             d = sprintf("%.2f", d)) %>%
+      select(term, d)
+    
+    results %>%
+      left_join(., eff_size) %>%
+      mutate(d = ifelse(is.na(d), "--", d)) %>%
+      select(term, `b [95% CI]`, d, df, t, p)
+    
+  } else {
+    results %>%
+      select(term, `b [95% CI]`, df, t, p)
+  }
+}
+
+# simple effects function
+simple_effects = function(model, sharing = FALSE) {
+  if(sharing == FALSE) {
+    results = emmeans::contrast(emmeans::emmeans(model, ~ article_cond | condition),
+                            "revpairwise", by = "condition", adjust = "none") %>%
+      data.frame() %>%
+      filter(grepl("control", contrast)) %>%
+      rename("group" = condition) %>%
+      select(contrast, group, estimate, p.value)
+  } else {
+    results = emmeans::contrast(emmeans::emmeans(model, ~ article_cond | condition + sharing_type),
+                            "revpairwise", by = "condition", adjust = "none") %>%
+      data.frame() %>%
+      filter(grepl("- control", contrast)) %>%
+      filter(!grepl("^control", contrast)) %>%
+      extract(contrast, c("exp_sharing", "control_sharing"), ".* (0|1) - control (0|1)", remove = FALSE) %>%
+      filter(exp_sharing == control_sharing) %>%
+      mutate(sharing_type = ifelse(exp_sharing == 0, "broadcast", "narrowcast"),
+             contrast = gsub("0|1", "", contrast)) %>%
+      rename("group" = condition) %>%
+      select(contrast, sharing_type, group, estimate, p.value)
+  }
+  
+  results %>%
+    mutate(p.value = ifelse(p.value < .001, "< .001",
+                      ifelse(p.value == 1, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p.value))))) %>%
+    kable(digits = 2) %>%
+    kableExtra::kable_styling()
+}
+```
+
+
+## define aesthetics
+```{r}
+palette_condition = c("self" = "#ee9b00",
+                      "control" = "#bb3e03",
+                      "other" = "#005f73")
+palette_dv = c("self-relevance" = "#ee9b00",
+               "social relevance" = "#005f73",
+               "sharing" = "#56282D")
+
+plot_aes = theme_minimal() +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 12),
+        text = element_text(size = 16, family = "Futura Medium"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(color = "black"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+```
+
+## load data
+```{r}
+data = read.csv("../data/study2_data.csv", stringsAsFactors = FALSE) %>%
+  mutate(article_cond = ifelse(article_cond == "social", "other", article_cond),
+         msg_rel_self_z = scale(msg_rel_self, center = TRUE, scale = TRUE),
+         msg_rel_social_z = scale(msg_rel_social, center = TRUE, scale = TRUE)) %>%
+  rename("condition" = group) %>%
+  filter(sharing_type_key == "msg_sharing_narrow")
+
+sub_conditions = data %>%
+  select(SID, condition) %>%
+  unique()
+```
+
+# descriptives {.tabset}
+## group ns
+Sample size by group
+
+```{r}
+data %>%
+  select(condition, SID) %>%
+  unique() %>%
+  group_by(condition) %>%
+  summarize(n = n()) %>%
+  kable() %>%
+  kable_styling()
+```
+
+## ratings
+Summarize means and SDs
+```{r}
+data %>%
+  gather(variable, value, msg_share, msg_rel_self, msg_rel_social) %>%
+  group_by(variable) %>%
+  summarize(M = mean(value, na.rm = TRUE),
+            SD = sd(value, na.rm = TRUE)) %>%
+  mutate(variable = ifelse(variable == "msg_rel_self", "self-relevance",
+                    ifelse(variable == "msg_rel_social", "social relevance", "sharing intention"))) %>%
+  kable(digits = 2) %>%
+  kableExtra::kable_styling()
+```
+
+# H2 {.tabset}
+> Do the manipulations increase relevance? Is this effect stronger in the comment group?
+
+## self-relevance {.tabset}
+
+`r emo::ji("check")` H2a: Self-focused intervention (compared to control) will increase self-relevance
+
+We replicate our previous work in the comment group: the self-focused condition increases self-relevance compared to the control
+
+`r emo::ji("check")` This effect is smaller for both the timed and untimed groups
+
+```{r}
+mod_h2a = lmer(msg_rel_self ~ 1 + article_cond * condition + (1 + article_cond | SID),
+              data = data,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h2a = table_model(mod_h2a)
+
+table_h2a %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### simple effects by group
+```{r}
+simple_effects(mod_h2a)
+```
+
+### summary
+```{r}
+summary(mod_h2a)
+```
+
+## social relevance {.tabset}
+
+`r emo::ji("check")` H2b: Other-focused intervention (compared to control) will increase social relevance
+
+We replicate our previous work in the comment group: the other-focused condition increases social relevance compared to the control
+
+`r emo::ji("check")` This effect is smaller for both the timed and untimed groups
+
+```{r}
+mod_h2b = lmer(msg_rel_social ~ 1 + article_cond * condition + (1 + article_cond | SID),
+              data = data,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h2b = table_model(mod_h2b)
+
+table_h2b %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### simple effects by group
+```{r}
+simple_effects(mod_h2b)
+```
+
+### summary
+```{r}
+summary(mod_h2b)
+```
+
+## combined plot
+```{r, fig.width=5, fig.height=4.5}
+
+predicted_h2a = ggeffects::ggpredict(mod_h2a, c("article_cond", "condition")) %>%
+              data.frame() %>%
+  mutate(model = "self-relevance")
+
+predicted_h2b = ggeffects::ggpredict(mod_h2b, c("article_cond", "condition")) %>%
+              data.frame() %>%
+  mutate(model = "social relevance")
+
+bind_rows(predicted_h2a, predicted_h2b) %>%
+  mutate(x = factor(x, levels = c("self", "control", "other"))) %>%
+  ggplot(aes(x = group, y = predicted, color = x)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1) +
+  facet_grid(~ model) +
+  coord_flip() +
+  scale_color_manual(name = "", values = palette_condition) +
+  labs(x = "", y = "\nmean predicted relevance rating") +
+  plot_aes +
+  theme(legend.position = "top")
+```
+
+# H3 {.tabset}
+> Is greater self and social relevance associated with higher sharing intentions?
+
+`r emo::ji("check")` H1a: Greater self-relevance ratings will be associated with higher narrowcast sharing intentions
+
+`r emo::ji("check")` H1a: Greater social relevance ratings will be associated with higher narrowcast sharing intentions
+
+```{r}
+mod_h3 = lmer(msg_share ~ msg_rel_self_z + msg_rel_social_z + (1 + msg_rel_self_z + msg_rel_social_z | SID),
+              data = data,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+## plot
+```{r}
+vals = seq(-2,2,.1)
+
+predicted_h3 = ggeffects::ggpredict(mod_h3, c("msg_rel_self_z [vals]")) %>%
+  data.frame() %>%
+  mutate(variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h3, c("msg_rel_social_z [vals]")) %>%
+              data.frame() %>%
+              mutate(variable = "social relevance"))
+
+predicted_sub_h3 = ggeffects::ggpredict(mod_h3, terms = c("msg_rel_self_z [vals]", "SID"), type = "random") %>%
+  data.frame() %>%
+  mutate(variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h3, c("msg_rel_social_z [vals]", "SID"), type = "random") %>%
+              data.frame() %>%
+              mutate(variable = "social relevance"))
+
+predicted_h3 %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_sub_h3, aes(group = group, color = variable),
+              geom ='line', method = "lm", alpha = .05, linewidth = .75, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = variable), alpha = .5, color = NA) +
+  geom_line(aes(color = variable), size = 1.5) +
+  facet_grid(~variable) +
+  scale_color_manual(name = "", values = palette_dv) +
+  scale_fill_manual(name = "", values = palette_dv) +
+  labs(x = "\nrelevance rating", y = "predicted sharing intention rating\n") +
+  plot_aes +
+    theme(legend.position = "none")
+```
+
+## model table
+```{r}
+table_model(mod_h3) %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+## summary
+```{r}
+summary(mod_h3)
+```
+
+# H5 {.tabset}
+> Do the manipulations increase sharing intentions? Is this effect stronger in the comment group?
+
+Here we focus on narrowcasting only since that is the type of sharing we used in fMRI study 1.
+
+`r emo::ji("check")` H5a: Self-focused intervention (compared to control) will increase sharing intentions
+
+`r emo::ji("check")` H5b: Other-focused intervention (compared to control) will increase sharing intentions
+
+We replicate our previous work in the comment group: the self- and other-focused conditions increase sharing intentions compared to the control, and these effects are stronger for narrowcast compared to broadcasting sharing intentions
+
+`r emo::ji("check")` These effects were smaller for both the timed and untimed groups
+
+```{r}
+mod_h5 = lmer(msg_share ~ 1 + article_cond*condition + (1 + article_cond | SID),
+              data = data,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+## plot
+```{r, fig.width=5, fig.height=4.5}
+predicted_h5 = ggeffects::ggpredict(mod_h5, c("article_cond", "condition")) %>%
+              data.frame() %>%
+  mutate(model = "sharing")
+
+predicted_h5 %>%
+  mutate(x = factor(x, levels = c("self", "control", "other"))) %>%
+  ggplot(aes(x = group, y = predicted, color = x)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1) +
+  coord_flip() +
+  scale_color_manual(name = "", values = palette_condition) +
+  labs(x = "", y = "\nmean predicted sharing intention rating") +
+  plot_aes +
+  theme(legend.position = "top")
+```
+
+## model table
+```{r}
+table_h5 = table_model(mod_h5)
+
+table_h5 %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+## simple effects by group
+```{r}
+simple_effects(mod_h5, sharing = FALSE)
+```
+
+## summary
+```{r}
+summary(mod_h5)
+```
+
+# combined plot {.tabset}
+## versus control
+```{r, fig.width=8, fig.height=5.75}
+predicted_h2a_con = ggeffects::hypothesis_test(mod_h2a, c("article_cond", "condition")) %>%
+  data.frame() %>%
+  arrange(condition) %>%
+  filter(grepl("^control", article_cond) & !article_cond == "control-control") %>%
+  filter(condition %in% c("comment-comment", "untimed-untimed", "timed-timed")) %>%
+  mutate(model = "self-relevance")
+
+predicted_h2b_con = ggeffects::hypothesis_test(mod_h2b, c("article_cond", "condition")) %>%
+  data.frame() %>%
+  arrange(condition) %>%
+  filter(grepl("^control", article_cond) & !article_cond == "control-control") %>%
+  filter(condition %in% c("comment-comment", "untimed-untimed", "timed-timed")) %>%
+  mutate(model = "social relevance")
+
+predicted_h5_con = ggeffects::hypothesis_test(mod_h5, c("article_cond", "condition")) %>%
+  data.frame() %>%
+  arrange(condition) %>%
+  filter(grepl("^control", article_cond) & !article_cond == "control-control") %>%
+  filter(condition %in% c("comment-comment", "untimed-untimed", "timed-timed")) %>%
+  mutate(model = "sharing")
+
+bind_rows(predicted_h2a_con, predicted_h2b_con, predicted_h5_con) %>%
+  mutate(condition = gsub("-.*", "", condition),
+         condition = recode(condition, "untimed" = "reflect:\nuntimed",
+                            "timed" = "reflect:\ntimed"),
+         article_cond = gsub("control-", "", article_cond),
+         article_cond = sprintf("%s > control", article_cond),
+         Contrast = Contrast * -1,
+         conf.low = conf.low * -1,
+         conf.high = conf.high * -1,
+         article_cond = factor(article_cond, levels = c("self > control", "other > control"))) %>%
+  mutate(model = factor(model, levels = c("self-relevance", "social relevance", "sharing"))) %>%
+  ggplot(aes(x = condition, y = Contrast, color = article_cond)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = .75) +
+  facet_grid(~ model) +
+  coord_flip() +
+  scale_color_manual(name = "", values = c(palette_condition[[1]], palette_condition[[3]])) +
+  labs(x = "", y = "\npredicted rating") +
+  plot_aes +
+  theme(legend.position = "top")
+```
+
+## all conditions
+```{r, fig.width=8, fig.height=5.75}
+bind_rows(predicted_h2a, predicted_h2b, predicted_h5) %>%
+  mutate(model = factor(model, levels = c("self-relevance", "social relevance", "sharing")),
+         x = factor(x, levels = c("self", "control", "other")),
+         group = ifelse(group == "timed", "reflect:\ntimed",
+                 ifelse(group == "untimed", "reflect:\nuntimed", "comment")),
+         group = factor(group, levels = c("reflect:\ntimed", "reflect:\nuntimed", "comment"))) %>%
+  ggplot(aes(x = group, y = predicted, color = x)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1) +
+  facet_grid(~ model) +
+  coord_flip() +
+  scale_color_manual(name = "", values = palette_condition) +
+  labs(x = "", y = "\npredicted rating") +
+  plot_aes +
+  theme(legend.position = "top")
+```
+
+# combined table
+```{r}
+table_h2a %>% mutate(DV = "H2a: Self-relevance") %>%
+  bind_rows(table_h2b %>% mutate(DV = "H2b: Social relevance")) %>%
+  bind_rows(table_h5 %>% mutate(DV = "H5: Sharing intention")) %>%
+  select(DV, everything()) %>%
+  kable() %>%
+  kable_styling()
+```
+
+# word count analyses {.tabset}
+Test whether word count is higher in the experimental conditions, and whether it is positively associated with self and social relevance, and sharing intention ratings.
+
+## descriptives
+```{r}
+words_ratings = data %>%
+  filter(condition == "comment") %>%
+  ungroup() %>%
+  mutate(n_c = n_words - mean(n_words, na.rm = TRUE))
+
+data %>%
+  group_by(article_cond) %>%
+  summarize(mean = mean(n_words, na.rm = TRUE),
+            sd = sd(n_words, na.rm = TRUE),
+            min = min(n_words, na.rm = TRUE),
+            max = max(n_words, na.rm = TRUE)) %>%
+  kable(digits = 2) %>%
+  kableExtra::kable_styling()
+```
+
+## condition effects {.tabset}
+
+> Is word count higher in the experimental conditions compared to the control condition?
+
+`r emo::ji("check")` The word count is higher in the experimental conditions compared to the control condition
+
+```{r}
+mod_words = lmer(n_words ~ 1 + article_cond + (1 + article_cond | SID),
+              data = data,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### plot
+```{r}
+predicted_words = ggeffects::ggpredict(mod_words, c("article_cond")) %>%
+              data.frame() %>%
+  mutate(x = factor(x, levels = c("self", "control", "other")))
+
+predicted_sub_words = ggeffects::ggpredict(mod_words, terms = c("article_cond", "SID"), type = "random") %>%
+  data.frame()%>%
+  mutate(x = factor(x, levels = c("self", "control", "other")))
+
+predicted_words %>%
+  ggplot(aes(x = x, y = predicted)) +
+  stat_summary(data = predicted_sub_words, aes(group = group), fun = "mean", geom = "line",
+               size = .08, color = "grey50") +
+  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1) +
+  geom_pointrange(aes(color = x, ymin = conf.low, ymax = conf.high), size = .5) +
+  scale_color_manual(name = "", values = palette_condition, guide = "none") +
+  scale_alpha_manual(name = "", values = c(1, .5)) +
+  labs(x = "", y = "predicted word count\n") +
+  plot_aes
+```
+
+### model table
+```{r}
+table_words = table_model(mod_words, word_count = TRUE)
+
+table_words %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_words)
+```
+
+## relevance {.tabset}
+> Is word count positively associated with self and social relevance ratings?
+
+### self-relevance {.tabset}
+
+`r emo::ji("check")` Word count is positively associated with self-relevance ratings
+
+```{r}
+mod_words_h1 = lmer(msg_rel_self ~ 1 + n_c + (1 + n_c | SID),
+              data = filter(words_ratings, sharing_type == 0),
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+#### plot
+```{r}
+values = seq(-15, 60, 10)
+predicted_self = ggeffects::ggpredict(mod_words_h1, terms = "n_c [values]") %>%
+  data.frame()
+
+predicted_sub_self = ggeffects::ggpredict(mod_words_h1, terms = c("n_c [values]", "SID"), type = "random") %>%
+  data.frame()
+
+predicted_self %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_sub_self, aes(group = group), geom ='line', method = "lm", alpha = .05, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .5) +
+  geom_line(size = 1) +
+  labs(x = "\nword count (grand mean-centered)", y = "predicted self-relevance rating\n") +
+  plot_aes
+```
+
+#### model table
+```{r}
+table_words_h1 = table_model(mod_words_h1, word_count = TRUE)
+
+table_words_h1 %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+#### summary
+```{r}
+summary(mod_words_h1)
+```
+
+### social relevance {.tabset}
+
+`r emo::ji("check")` Word count is positively associated with social relevance ratings
+
+```{r}
+mod_words_h2 = lmer(msg_rel_social ~ 1 + n_c + (1 + n_c | SID),
+              data = filter(words_ratings, sharing_type == 0),
+              control = lmerControl(optimizer = "bobyqa"))
+
+```
+
+#### plot
+```{r}
+values = seq(-15, 60, 10)
+predicted_social = ggeffects::ggpredict(mod_words_h2, terms = "n_c [values]") %>%
+  data.frame()
+
+predicted_sub_social = ggeffects::ggpredict(mod_words_h2, terms = c("n_c [values]", "SID"), type = "random") %>%
+  data.frame()
+
+predicted_social %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_sub_social, aes(group = group), geom ='line', method = "lm", alpha = .05, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .5) +
+  geom_line(size = 1) +
+  labs(x = "\nword count (grand mean-centered)", y = "predicted social relevance rating\n") +
+  plot_aes
+```
+
+#### model table
+```{r}
+table_words_h2 = table_model(mod_words_h2, word_count = TRUE)
+
+table_words_h2 %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+#### summary
+```{r}
+summary(mod_words_h2)
+```
+
+## sharing {.tabset}
+> Is word count positively associated with sharing intention ratings?
+
+Here we focus on narrowcasting only since that is the type of sharing we used in fMRI study 1.
+
+`r emo::ji("check")` Word count is positively associated with narrowcast sharing intentions
+
+```{r}
+mod_words_h3 = lmer(msg_share ~ 1 + n_c + (1 + n_c | SID),
+              data = filter(words_ratings, sharing_type == 0),
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### plot
+```{r}
+values = seq(-15, 60, 10)
+predicted_sharing = ggeffects::ggpredict(mod_words_h3, terms = "n_c [values]") %>%
+  data.frame()
+
+predicted_sub_sharing = ggeffects::ggpredict(mod_words_h3, terms = c("n_c [values]", "SID"), type = "random") %>%
+  data.frame()
+
+predicted_sharing %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_sub_sharing, aes(group = group), geom ='line', method = "lm", alpha = .05, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .5) +
+  geom_line(size = 1) +
+  labs(x = "\nword count (grand mean-centered)", y = "predicted sharing intention rating\n") +
+  plot_aes
+```
+
+### model table
+```{r}
+table_words_h3 = table_model(mod_words_h3, word_count = TRUE)
+
+table_words_h3 %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_words_h3)
+```
+
+## combined plot
+```{r, fig.width=6.5, fig.height=5.5}
+predicted_sub = predicted_sub_self %>%
+  mutate(facet = "self-relevance") %>%
+  bind_rows(., predicted_sub_social %>%  mutate(facet = "social relevance")) %>%
+  bind_rows(., predicted_sub_sharing %>%  mutate(facet = "sharing")) %>%
+  mutate(facet = factor(facet, levels = c("self-relevance", "social relevance", "sharing")))
+  
+predicted_self %>%
+  mutate(facet = "self-relevance") %>%
+  bind_rows(., predicted_social %>%  mutate(facet = "social relevance")) %>%
+  bind_rows(., predicted_sharing %>%  mutate(facet = "sharing")) %>%
+  mutate(facet = factor(facet, levels = c("self-relevance", "social relevance", "sharing"))) %>%
+  ggplot(aes(x, predicted, color = facet, fill = facet)) +
+  stat_smooth(data = predicted_sub, aes(group = interaction(group, facet)), geom ='line', method = "lm", alpha = .1, size = .75, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .25, color = NA) +
+  geom_line(size = 2) +
+  scale_color_manual(values = palette_dv, name = "") + 
+  scale_fill_manual(values = palette_dv, name = "") + 
+  labs(x = "\nword count (grand mean-centered)", y = "predicted rating\n") +
+  plot_aes +
+  theme(legend.position = c(.2, .95))
+```
+
+## combined table
+```{r}
+table_words %>% mutate(DV = "Word count") %>%
+  bind_rows(table_words_h1 %>% mutate(DV = "Self-relevance")) %>%
+  bind_rows(table_words_h2 %>% mutate(DV = "Social relevance")) %>%
+  bind_rows(table_words_h3 %>% mutate(DV = "Sharing intention")) %>%
+  select(DV, everything()) %>%
+  kable() %>%
+  kable_styling()
+```
+
+# cite packages
+```{r}
+report::cite_packages()
+```
