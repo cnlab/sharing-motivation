@@ -22,7 +22,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 options(scipen=999)
 ```
 
-This script tidies and prepares the cleaned data from Study 1.
+This script tidies and prepares the cleaned data from Study 4.
 
 # load packages
 ```{r}
@@ -30,59 +30,80 @@ if(!require('pacman')) {
 	install.packages('pacman')
 }
 
-pacman::p_load(tidyverse) #tidyText
+pacman::p_load(tidyverse, tidyText)
 ```
 
-# prep data {.tabset}
+## load data
 ```{r}
-read_events = function(file) {
-  read.csv(file, stringsAsFactors = FALSE, sep = "\t", colClasses = "character") %>%
-    mutate(file = file)
-}
+data_dir = "~/Library/CloudStorage/Box-Box/BB-PRIME-PhaseII_Data_854102/BB-PRIME-PhaseII_NonIDable/BBPRIME_tournament/data/"
 
-read_betas = function(file) {
-  read.csv(file, stringsAsFactors = FALSE)
-}
+comments = read.csv(file.path(data_dir, "prepped/wave1_relevance.csv"), stringsAsFactors = FALSE) %>%
+  mutate(group = gsub("_relevance", "", group),
+         group = recode(group, "social" = "other")) %>%
+  rename("comment" = value,
+         "article_cond" = group) %>% 
+  select(-survey_name, -scale_name, -clicks, -action)
 
-post = read.csv("../data/raw/task_postscanner.csv", stringsAsFactors = FALSE) %>%
-  select(sub, cond, hash, value) %>%
-  spread(cond, value) %>%
-  rename("pID" = sub,
-         "self_relevance" = self,
-         "social_relevance" = other)
+n_words = comments %>%
+  group_by(article_cond, SID, item) %>%
+  tidytext::unnest_tokens(word, comment) %>%
+  summarize(n_words = n())
 
-events = fs::dir_ls("../data/raw/events/", regexp = ".*share.*tsv", recurse = TRUE) %>%
-  map_dfr(read_events) %>%
-  extract(file, c("pID", "run"), "sub-(BPP[0-9]{2}|BPA[0-9]{2}).*run-([1-3]{1})") %>%
-  mutate_at(vars(c("onset", "duration", "block", "click", "index", "rt", "value")), funs(as.numeric)) %>%
-  mutate(key = ifelse(grepl("read", event_name) & lead(trial_type) == "rate", lead(key), key),
-         rt = ifelse(grepl("read", event_name) & lead(trial_type) == "rate", lead(rt), rt),
-         value = ifelse(grepl("read", event_name) & lead(trial_type) == "rate", lead(value), value),
-         event_name = as.character(event_name),
-         site = ifelse(grepl("A", pID), "Netherlands", "USA")) %>%
-  filter(grepl("read", event_name)) %>%
-  rename("event" = event_name) %>%
-  arrange(pID, run, onset) %>%
-  group_by(pID) %>%
-  mutate(trial = row_number()) %>%
-  left_join(., post) %>%
-  select(pID, run, trial, event, cond, value, self_relevance, social_relevance, everything()) 
+messages = read.csv(file.path(data_dir, "prepped/wave1_messages.csv"), stringsAsFactors = FALSE) %>%
+  filter(grepl("relevance|control", group)) %>%
+  mutate(group = gsub("_relevance", "", group),
+         group = recode(group, "social" = "other"),
+         topic = "climate") %>%
+  rename("article_cond" = group) %>%
+  select(-survey_name, -main_headline, -snippet, -clicks, -action) %>%
+  left_join(., n_words) %>%
+  filter(article_cond == "control" | (!article_cond == "control" & n_words > 5)) %>% #filter out word counts less of 5 or less
+  rename("article_number" = item) %>%
+  filter(exclude_item == 0) %>% # filter out items excluded from the intervention tournament
+  spread(scale_name, value) %>%
+  select(-contains("emo"), -msg_read)
 
-betas = fs::dir_ls("../data/raw/task-share_model-beta/", regexp = ".*csv") %>%
-  map_dfr(read_betas) %>%
-  mutate(pID = gsub("sub-", "", pID)) %>%
-  group_by(atlas) %>%
-  mutate(outlier = ifelse(global_mean > mean(global_mean, na.rm = TRUE) + 3 * sd(global_mean, na.rm = TRUE), "yes",
-                   ifelse(global_mean < mean(global_mean, na.rm = TRUE) - 3 * sd(global_mean, na.rm = TRUE), "yes", "no")),
-         atlas = recode(atlas, "self" = "self-referential")) %>%
-  unique()
+data_person = read.csv(file.path(data_dir, "prepped/wave1_emotions.csv")) %>%
+  bind_rows(read.csv(file.path(data_dir, "prepped/wave1_other_dvs.csv"))) %>%
+  filter(grepl("relevance|control", group)) %>%
+  filter(!grepl("climate_change_cause", scale_name)) %>%
+  mutate(group = gsub("_relevance", "", group),
+         group = recode(group, "social" = "other")) %>%
+  select(-n_missing) %>%
+  group_by(scale_name, item) %>%
+  mutate(value = scale(value, center = TRUE, scale = TRUE))
 
-merged_all = betas %>%
-  left_join(., events, by = c("pID", "event")) %>%
-  select(-parcel, -sd, -onset, -duration, -block, -click, -hash, -index, -key, -main_headline, -quartile, -rt, -snippet)
+data_petition = read.csv(file.path(data_dir, "prepped/wave1_petitions.csv")) %>%
+  filter(grepl("relevance|control", group)) %>%
+  filter(!grepl("petition_sign$", scale_name)) %>%
+  select(-contains("petition")) %>%
+  mutate(group = gsub("_relevance", "", group),
+         group = recode(group, "social" = "other"),
+         value = as.numeric(value)) %>%
+  select(-contains("petition")) %>%
+  group_by(scale_name, item) %>%
+  mutate(value = ifelse(!item == "petition_link_clicks", scale(value, center = TRUE, scale = TRUE), value))
+
+data_actions = read.csv(file.path(data_dir, "prepped/wave1_actions.csv")) %>%
+  filter(!grepl("flight", scale_name)) %>%
+  filter(grepl("relevance|control", group)) %>%
+  select(-value_z) %>%
+  mutate(group = gsub("_relevance", "", group),
+         group = recode(group, "social" = "other")) %>%
+  group_by(scale_name, category, item) %>%
+  mutate(value = scale(value))
+
+exploratory_dvs = data_actions %>%
+  bind_rows(., data_petition) %>%
+  bind_rows(., data_person) %>%
+  filter(grepl("impact|petition_share|knowledge|efficacy", scale_name)) %>%
+  arrange(SID) %>%
+  rename("article_cond" = group) %>%
+  filter(SID %in% messages$SID)
 ```
 
-# write csvs
+# write csv
 ```{r}
-write.csv(merged_all, "../data/study1_data.csv", row.names = FALSE)
+write.csv(messages, "../data/study1_data.csv", row.names = FALSE)
+write.csv(exploratory_dvs, "../data/study1_exploratory_dvs.csv", row.names = FALSE)
 ```

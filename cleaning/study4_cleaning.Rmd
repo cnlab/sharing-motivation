@@ -1,0 +1,185 @@
+---
+title: "Study 4 data cleaning"
+author: ""
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen=999)
+```
+
+This script cleans the raw data from Study 4.
+
+# load packages
+```{r}
+if (!require(tidyverse)) {
+  install.packages('tidyverse')
+}
+if (!require(knitr)) {
+  install.packages('knitr')
+}
+if (!require(DT)) {
+  install.packages('DT')
+}
+if (!require(devtools)) {
+  install.packages('devtools')
+}
+
+if (!require(scorequaltrics)) {
+  devtools::install_github('dcosme/qualtrics', ref = "dev/enhance")
+}
+```
+
+# load and tidy data {.tabset}
+## define variables and paths
+
+To pull data from Qualtrics directly, you need a credentials file with an API token associated with your account. To create the file, follow these steps.
+
+1. Generate an API token for Qualtrics. Follow the steps outlined [here](https://www.qualtrics.com/support/integrations/api-integration/overview/).
+
+2. Save a Qualtrics credentials text file with the following format. In this example, the file is being saved as `~/credentials.yaml.PENN`. The `baseurl` is the URL for your institution on Qualtrics. Use `upenn.co1.qualtrics.com` for Penn Qualtrics.
+
+```
+token: oILNW6...[your qualtrics API token]
+baseurl: upenn.co1.qualtrics.com
+```
+
+`cred_file_location` = path to your Qualtrics credential file. 
+
+`survey_name_filter` = regular expression to filter the available stuveys
+
+```{r}
+cred_file_location = '~/credentials.yaml.PENN'
+survey_filter = 'BB-PRIME Follow-up Behavioral 2'
+```
+
+## filter matching surveys
+```{r}
+# load credential file
+credentials = scorequaltrics::creds_from_file(cred_file_location)
+
+# filter
+surveysAvail = scorequaltrics::get_surveys()
+surveysFiltered = filter(surveysAvail, grepl(survey_filter, name))
+knitr::kable(arrange(select(surveysFiltered, name), name))
+```
+
+## load data
+* The message stimuli can be found [here](https://osf.io/ak6wf))
+
+```{r}
+survey_raw = scorequaltrics::get_survey_responses(surveysFiltered$id[1])
+```
+
+## tidy data
+This code tidies the raw data and outputs a dataframe in the long format with the following columns:
+
+`study` = study name  
+`condition` = experimental group (no message control, message control, norm, autonomous, mocking)  
+`survey_name` = name of the survey or question category (e.g. intentions or SES)  
+`item` = individual survey item (or message rating) name  
+`value` = response or rating  
+
+```{r}
+# load state codes
+states = read.csv("state_codes.csv", stringsAsFactors = FALSE) %>%
+  mutate(state_code = as.numeric(state_code))
+
+# load and tidy survey
+surveys = survey_raw %>%
+  filter(!DistributionChannel == "preview") %>% # remove preview responses
+  filter(failed_screener == 0) %>% # remove participants who failed screener
+  filter(testJS == 1) %>% # remove failed tests
+  filter(!`Prolific ID` == "") %>% # remove test responses
+  filter(Progress > 41) %>% # remove people who didn't go beyond the practice round
+  rename("state_code" = state) %>%
+  left_join(., states, by = "state_code") %>% # replace state code with name
+  select(-state_code) %>%
+  mutate(SID = sprintf("s%03d", row_number())) %>% # create unique SID
+  gather(item, value, -c(SID, survey_condition, Progress)) %>%
+  filter(!grepl("_DO_", item)) %>% # remove randomization order info
+  mutate(value = ifelse(value == "", NA, value), #recode blank values as NA
+         item = gsub("ratings_20", "reading", item),
+         item = gsub("ratings_21", "sharing_broad", item),
+         item = gsub("ratings_33", "sharing_narrow", item),
+         item = gsub("ratings_34", "relevance_self", item),
+         item = gsub("ratings_35", "relevance_social", item)) %>%
+  extract(item, "survey_name", "(.*)_[0-9]+", remove = FALSE) %>%
+  mutate(survey_name = ifelse(is.na(survey_name), item, survey_name),
+         survey_name = gsub("[0-9]+_", "", survey_name))
+
+# spread to wide format
+surveys_wide = surveys %>%
+  select(-survey_name) %>%
+  spread(item, value)
+```
+
+# quality checks
+## failed attention checks
+```{r}
+# identify failed attention checks
+failed_attn = surveys %>%
+  filter((item == "6_attention-1" & !value == 2) | (item == "12_attention-2" & !value == 2)) %>%
+  select(SID, item, value) %>%
+  mutate(value = 1) %>%
+  spread(item, value) %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.), 0, .))
+```
+
+# exclude participants and select relevant variables
+
+Number of participants before exclusions = `r nrow(surveys_wide)`  
+Number of participants after exclusions = `r nrow(filter(surveys_wide, !SID %in% failed_attn$SID))`  
+Number excluded = `r nrow(failed_attn)`  
+
+
+```{r}
+surveys_clean = surveys %>%
+  #filter(!SID %in% failed_subs$SID) %>% # exclude participants
+  filter(!item %in% c("PROLIFIC_PID", "Prolific ID")) %>% #remove MIDs 
+  select(survey_condition, SID, survey_name, item, value) %>%
+  filter(grepl("relevance_self|relevance_social|sharing|stim_order|cond_order|gender|race|hispanic_latinx|ses_degree|income_household|^age$|state|comment", item)) %>% # filter relevant variables
+  filter(!grepl("practice|Practice", item))
+
+# spread to wide format
+surveys_clean_wide = surveys_clean %>%
+  select(-survey_name) %>%
+  spread(item, value)
+```
+
+# summarize survey ns
+```{r}
+surveys_clean_wide %>%
+  group_by(survey_condition) %>%
+  summarize(n = n())
+
+surveys_clean %>%
+  filter(!is.na(value)) %>%
+  group_by(survey_name) %>%
+  select(SID, survey_name) %>%
+  unique() %>%
+  summarize(n = n()) %>%
+  DT::datatable(filter = "top", rownames = FALSE)
+```
+
+# write csvs
+```{r}
+write.csv(filter(surveys_clean, !grepl("gender|race|hispanic_latinx|ses_degree|income_household|^age$|state", item)),
+          "../data/raw/study4_data.csv", row.names = FALSE)
+write.csv(filter(surveys_clean, grepl("gender|race|hispanic_latinx|ses_degree|income_household|^age$|state", item)),
+          "../data/raw/study4_demo.csv", row.names = FALSE)
+```

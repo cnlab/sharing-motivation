@@ -1,0 +1,183 @@
+---
+title: "Demographics: Study 1"
+author: ""
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(scipen = 999)
+```
+
+Individual demographic data is not shared publicly due to concerns related to potential identifiability of participants, but is available upon request. 
+
+# prep data {.tabset}
+## load packages
+```{r}
+if (!require(tidyverse)) {
+  install.packages('tidyverse')
+}
+if (!require(kableExtra)) {
+  install.packages('kableExtra')
+}
+if (!require(usmap)) {
+  install.packages('usmap')
+}
+```
+
+## define aesthetics
+```{r}
+palette = c("#3B9AB2", "#EBCC2A", "#F21A00")
+```
+
+## load and tidy data
+```{r}
+SIDs = read.csv("../data/study1_data.csv", stringsAsFactors = FALSE) %>%
+  gather(scale_name, value, contains("msg")) %>%
+  select(SID) %>%
+  unique()
+
+demo_raw = read.csv("~/Library/CloudStorage/Box-Box/BB-PRIME-PhaseII_Data_854102/BB-PRIME-PhaseII_NonIDable/BBPRIME_tournament/data/prepped/wave1_demographics.csv") %>%
+  filter(grepl("relevance|control", group)) %>%
+  filter(!item %in% c("gender_4_TEXT", "race_ethnicity_self")) %>%
+  filter(SID %in% SIDs$SID) %>%
+  group_by(SID, item) %>%
+  mutate(n = n())
+
+demo_multiracial = demo_raw %>%
+  filter(n > 1) %>%
+  mutate(value = "More than one race / ethnicity") %>%
+  unique()
+
+demo = demo_raw %>%
+  filter(!(item == "race_ethnicity" & SID %in% demo_multiracial$SID)) %>%
+  bind_rows(., demo_multiracial) %>%
+  group_by(item, value) %>%
+  summarize(n = n()) %>%
+  ungroup() 
+```
+
+# geographic distribution {.tabset}
+```{r}
+states = demo %>%
+  filter(grepl("state", item)) %>%
+  filter(!is.na(value)) %>%
+  rename("state" = value) 
+
+states %>%
+  usmap::plot_usmap(data = ., values = "n", color = "grey50") +
+  scale_fill_gradient2(low = palette[1], mid = palette[2], midpoint = max(states$n) / 2, high = palette[3],
+                       name = "", na.value = NA, limits = c(0, max(states$n)), breaks = seq(0, max(states$n), 50)) +
+  theme(text = element_text(size = 12, family = "Futura Medium"),
+        legend.position = "right")
+```
+
+# age {.tabset}
+```{r}
+demo %>%
+  filter(item == "age") %>%
+  mutate(value = as.numeric(value)) %>%
+  summarize(`age range` = sprintf("%s - %s", min(value, na.rm = TRUE), max(value, na.rm = TRUE)),
+            `mean age` = mean(value, na.rm = TRUE),
+            `sd age` = sd(value, na.rm = TRUE)) %>%
+  kable(digits = 1) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+
+# gender {.tabset}
+```{r}
+demo %>%
+  filter(item == "gender") %>%
+  mutate(value = ifelse(!(grepl("Man|Non-binary|Prefer|Woman", value) | is.na(value)), "Prefer to self-describe", value)) %>%
+  group_by(value) %>%
+  summarize(n = sum(n)) %>%
+  mutate(total = sum(n),
+         percent = sprintf("%.1f%s", (n / total) * 100, "%"),
+         value = ifelse(is.na(value), "Not reported", value)) %>%
+  select(-n, -total) %>%
+  mutate_if(is.character, funs(ifelse(is.na(.), "—", .))) %>%
+  kable(digits = 1) %>%
+    kableExtra::kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+
+# race and ethnicity {.tabset}
+```{r}
+hispanic_latinx = demo %>%
+  filter(item == "hispanic_latinx") %>%
+  group_by(value) %>%
+  summarize(n = sum(n)) %>%
+  mutate(total = sum(n),
+         percent = sprintf("%.1f%s", (n / total) * 100, "%")) %>%
+  select(-n, -total) %>%
+  spread(value, percent) %>%
+  select(Yes) %>%
+  rename("percent" = Yes) %>%
+  mutate(`race / ethnicity` = "Hispanic or Latinx")
+
+demo %>%
+  filter(item == "race_ethnicity") %>%
+  group_by(value) %>%
+  summarize(n = sum(n)) %>%
+  ungroup() %>%
+  mutate(total = sum(n),
+         percent = sprintf("%.1f%s", (n / total) * 100, "%"),
+         value = ifelse(is.na(value), "Not reported", value)) %>%
+  select(value, percent) %>%
+  rename("race / ethnicity" = value) %>%
+  bind_rows(., hispanic_latinx) %>%
+  arrange(`race / ethnicity`) %>%
+  mutate_if(is.character, funs(ifelse(is.na(.), "—", .))) %>%
+  kable(digits = 1) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+
+# education {.tabset}
+```{r}
+demo %>%
+  filter(item == "ses_degree") %>%
+  group_by(value) %>%
+  summarize(n = sum(n)) %>%
+  mutate(total = sum(n),
+         percent = sprintf("%.1f%s", (n / total) * 100, "%"),
+         value = ifelse(is.na(value), "Not reported", value)) %>%
+  mutate(value = factor(value, levels = c("Did not complete high school", "High school graduate (diploma)", "High school graduate (GED)", 
+                                          "Some college (1-4 years, no degree)", "Associate's degree (including occupational or academic degrees)",
+                                          "Bachelor's degree (BA, BS, etc)", "Master's degree (MA, MS, MENG, MSW, etc)",
+                                          "Professional school degree (MD, DDC, JD, etc)", "Doctorate degree (PhD, EdD, etc)", "Not reported"))) %>%
+  arrange(value) %>%
+  select(value, percent) %>%
+  rename("highest degree completed" = value) %>%
+  mutate_if(is.character, funs(ifelse(is.na(.), "—", .))) %>%
+  kable(digits = 1) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+
+# SES {.tabset}
+```{r}
+demo %>%
+  filter(item == "ses_income_household") %>%
+  group_by(value) %>%
+  summarize(n = sum(n)) %>%
+  mutate(total = sum(n),
+         percent = sprintf("%.1f%s", (n / total) * 100, "%")) %>%
+  mutate(value = ifelse(is.na(value), "Not reported", value),
+         value = factor(value, levels = c("Less than $5,000", "$5,000 through $11,999", "$12,000 through $15,999", "$16,000 through $24,999", 
+                                          "$25,000 through $34,999", "$35,000 through $49,999", "$50,000 through $74,999", "$75,000 through $99,999",
+                                          "$100,000 through $149,999", "$150,000 and greater", "Not reported", "Prefer not to say"))) %>%
+  arrange(value) %>%
+  select(value, percent) %>%
+  rename("household income" = value) %>%
+  mutate_if(is.character, funs(ifelse(is.na(.), "—", .))) %>%
+  kable(digits = 1) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```

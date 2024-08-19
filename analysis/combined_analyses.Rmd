@@ -1,0 +1,1707 @@
+---
+title: "Combined analyses"
+author: "Dani Cosme"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE, dpi = 300)
+
+options(scipen=999)
+```
+
+In this report, we reproduce the combined analyses testing H1-3 across Studies 1-4, exploratory analyses examining moderation by topic, exploratory word count analyses, and parallel mediation analyses.
+
+
+# prep data {.tabset}
+First, we load the relevant packages, define functions and plotting aesthetics, and load and tidy the data.
+
+## load packages
+```{r}
+if(!require('pacman')) {
+	install.packages('pacman')
+}
+
+pacman::p_load(tidyverse, knitr, kableExtra, lmerTest, report, patchwork, brms, tidybayes, install = TRUE)
+```
+
+## define functions
+```{r}
+# parameter estimate plotting function for purrr models
+plot_model = function(model_data, palette, size = .75, facet = NULL, sharing_type = FALSE, study = TRUE) {
+  mod_renamed = model_data %>%
+    mutate(term = gsub("msg_", "", term),
+           term = gsub("_", " ", term),
+           term = gsub(":", " x ", term),
+           term = gsub(" z", "", term),
+           term = gsub("rel self x topichealth", "self-relevance x\ntopic (health)", term),
+           term = gsub("topichealth x rel social", "social relevance x\ntopic (health)", term),
+           term = gsub("topichealth", "topic (health)", term),
+           term = gsub("rel self", "self\nrelevance", term),
+           term = gsub("rel social", "social\nrelevance", term),
+           term = gsub(" within", "\nwithin", term),
+           term = gsub(" between", "\nbetween", term),
+           term = gsub("article condother", "other > control", term),
+           term = gsub("article condself", "self > control", term),
+           term = gsub("n c", "word count", term),
+           term = gsub("x topic \\(health\\)", "x\ntopic (health)", term)) 
+  
+  if (isTRUE(sharing_type)) {
+    mod_renamed = mod_renamed %>%
+      mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+  }
+  
+  if (isTRUE(study)) {
+    mod = mod_renamed %>%
+    ggplot(aes(x = term, y = estimate, color = study)) +
+    geom_pointrange(aes( ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = size, linewidth = size) +
+    geom_hline(yintercept = 0, color = "grey50", linetype = "dotted") +
+    coord_flip() +
+    scale_fill_manual(name = "", values = palette) +
+    scale_color_manual(name = "", values = palette) +
+    labs(x = "", y = "\nstandardized  regression coefficient\n") +
+    plot_aes
+    
+  } else {
+  
+  mod = mod_renamed %>%
+    ggplot(aes(x = term, y = estimate)) +
+    geom_pointrange(aes( ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = size, linewidth = size) +
+    geom_hline(yintercept = 0, color = "grey50", linetype = "dotted") +
+    coord_flip() +
+    scale_fill_manual(name = "", values = palette) +
+    scale_color_manual(name = "", values = palette) +
+    labs(x = "", y = "\nstandardized  regression coefficient\n") +
+    plot_aes
+  }
+  
+  if (!is.null(facet)) {
+    mod + 
+      facet_grid(~ get(facet))
+  } else {
+    mod
+  }
+}
+
+# plot model predictions function
+# parameter estimate plotting function for purrr models
+plot_predicted = function(predicted_data, palette, size = .75, facet = NULL, sharing_type = FALSE, study = TRUE) {
+
+  if (isTRUE(sharing_type)) {
+    predicted_data = predicted_data %>%
+      mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+  }
+  
+  if (isTRUE(study)) {
+  mod = predicted_data %>%
+    ggplot(aes(x = group, y = predicted, color = study)) +
+    geom_pointrange(aes( ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = size, linewidth = size) +
+    geom_hline(yintercept = 0, color = "grey50", linetype = "dotted") +
+    coord_flip() +
+    scale_fill_manual(name = "", values = palette) +
+    scale_color_manual(name = "", values = palette) +
+    labs(x = "", y = "\nstandardized  regression coefficient\n") +
+    plot_aes
+  
+  } else {
+    mod = predicted_data %>%
+    ggplot(aes(x = group, y = predicted)) +
+    geom_pointrange(aes( ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = size, linewidth = size) +
+    geom_hline(yintercept = 0, color = "grey50", linetype = "dotted") +
+    coord_flip() +
+    scale_fill_manual(name = "", values = palette) +
+    scale_color_manual(name = "", values = palette) +
+    labs(x = "", y = "\nstandardized  regression coefficient\n") +
+    plot_aes
+    
+  }
+  
+  if (!is.null(facet)) {
+    mod + 
+      facet_grid(facet)
+  } else {
+    mod
+  }
+}
+
+
+# MLM results table function
+table_model = function(model_data, sharing_type = FALSE, intercept = FALSE, spread = FALSE, study = TRUE) {
+  
+  mod = model_data %>%
+    rename("SE" = std.error,
+           "t" = statistic,
+           "p" = p.value) %>%
+    select(-group, -effect) %>%
+    mutate_at(vars(-contains("term"), -contains("value"), -contains("study"), -contains("sharing_type"), -p), round, 2) %>%
+    mutate(term = gsub("msg_", "", term),
+           term = gsub("_", " ", term),
+           term = gsub(":", " x ", term),
+           term = gsub("z", "", term),
+           term = gsub("topichealth", "topic (health)", term),
+           term = gsub("rel self", "self-relevance", term),
+           term = gsub("rel social", "social relevance", term),
+           term = gsub("within", "within", term),
+           term = gsub("between", "between", term),
+           term = gsub("sharing type", "sharing type (narrowcast)", term),
+           term = ifelse(grepl("between x ", term), "sharing type (narrowcast) x social relevance between", term),
+           term = gsub("article condother", "other - control", term),
+           term = gsub("article condself", "self - control", term),
+           term = gsub("\\(Intercept\\)", "control", term),
+           term = gsub("n c", "word count", term),
+           p = ifelse(p < .001, "< .001",
+                      ifelse(p == 1, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
+           `b [95% CI]` = sprintf("%.2f [%0.2f, %.2f]", estimate, conf.low, conf.high))
+  
+  if (isTRUE(intercept)) {
+    mod = mod %>%
+      mutate(term = recode(term, "control" = "intercept"))
+  }
+  
+  if (isTRUE(sharing_type) & isTRUE(study)) {
+  mod = mod %>%
+    mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                             "msg_share_narrow" = "narrowcast sharing")) %>%
+    select(study, sharing_type, term, `b [95% CI]`, df, t, p) %>%
+    arrange(study)
+    
+  } else if (isTRUE(sharing_type) & isFALSE(study)) {
+    mod = mod %>%
+    mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                             "msg_share_narrow" = "narrowcast sharing")) %>%
+    select(sharing_type, term, `b [95% CI]`, df, t, p)
+    
+  } else if (isFALSE(sharing_type) & isFALSE(study)) {
+    mod = mod %>%
+    select(term, `b [95% CI]`, df, t, p)
+    
+  } else {
+    
+  mod = mod %>%
+    select(study, term, `b [95% CI]`, df, t, p) %>%
+    arrange(study)
+  }
+  
+  if (isTRUE(spread)) {
+    mod %>%
+      select(-df, -t, -p) %>%
+      spread(study, `b [95% CI]`) %>%
+      kable() %>%
+      kableExtra::kable_styling()
+    
+  } else {
+    mod %>%
+      kable() %>%
+      kableExtra::kable_styling()
+  }
+}
+
+# Run bayesian mediation model
+run_brm_model = function(model_name, model_formula, y_var, data, study) {
+  if (file.exists(sprintf("models/model_%s_%s.RDS", model_name, study))) {
+    assign(get("model_name"), readRDS(sprintf("models/model_%s_%s.RDS", model_name, study)))
+  } else {
+    
+    assign(get("model_name"),
+           brm(
+             model_formula,
+             data = data,
+             cores = 4,
+             thin = 4,
+             chains = 8,
+             seed = seed,
+             control = list(adapt_delta = .99, max_treedepth = 15)
+        ))
+    
+    saveRDS(eval(parse(text = model_name)), sprintf("models/model_%s_%s.RDS", model_name, study))
+    return(eval(parse(text = model_name)))
+  }
+}
+
+# Get path estimates from bayesian mediation models
+create_paths = function(model, x_var, y_var) {
+  y_var = gsub("_", "", y_var)
+  paths = posterior_samples(model) %>% 
+    mutate(a1 = get(sprintf("b_msgrelself_article_cond%s", x_var)),
+           a2 = get(sprintf("b_msgrelsocial_article_cond%s", x_var)),
+           b1 = get(sprintf("b_%s_msg_rel_self", y_var)),
+           b2 = get(sprintf("b_%s_msg_rel_social", y_var)),
+           c_prime = get(sprintf("b_%s_article_cond%s", y_var, x_var)),
+           a1b1 = a1 * b1,
+           a2b2 = a2 * b2,
+           c = c_prime + a1b1 + a2b2,
+           cor1 = get(sprintf("cor_SID__msgrelself_article_cond%s__%s_msg_rel_self", x_var, y_var)),
+           cor2 = get(sprintf("cor_SID__msgrelsocial_article_cond%s__%s_msg_rel_social", x_var, y_var)),
+           sd_a1 = get(sprintf("sd_SID__msgrelself_article_cond%s", x_var)),
+           sd_b1 = get(sprintf("sd_SID__%s_msg_rel_self", y_var)),
+           sd_a2 = get(sprintf("sd_SID__msgrelsocial_article_cond%s", x_var)),
+           sd_b2 = get(sprintf("sd_SID__%s_msg_rel_social", y_var)),
+           cov_a1b1 = cor1*sd_a1*sd_b1,
+           cov_a2b2 = cor2*sd_a2*sd_b2,
+           a1b1_cov_a1b1 = a1b1 + cov_a1b1,
+           a2b2_cov_a2b2 = a2b2 + cov_a2b2,
+           model = x_var,
+           outcome = y_var)
+  
+  return(paths)
+}
+
+create_paths_between = function(model, x_var, y_var) {
+  y_var = gsub("_", "", y_var)
+  paths = posterior_samples(model) %>% 
+    mutate(a1 = get(sprintf("b_msgrelself_article_cond%s", x_var)),
+           a2 = get(sprintf("b_msgrelsocial_article_cond%s", x_var)),
+           b1 = get(sprintf("b_%s_msg_rel_self", y_var)),
+           b2 = get(sprintf("b_%s_msg_rel_social", y_var)),
+           c_prime = get(sprintf("b_%s_article_cond%s", y_var, x_var)),
+           a1b1 = a1 * b1,
+           a2b2 = a2 * b2,
+           c = c_prime + a1b1 + a2b2,
+           model = x_var,
+           outcome = y_var)
+  
+  return(paths)
+}
+
+get_paths = function(model, x_var, y_var, between = FALSE) {
+  
+  if (isTRUE(between)) {
+    paths = create_paths_between(model, x_var, y_var) %>% 
+      select(a1:c) %>% 
+      gather(path, value) %>% 
+      group_by(path) %>% 
+      summarize(median = median(value),
+                `Mdn [95% CI]` = sprintf("%.2f [%.2f, %.2f]", median(value), quantile(value, probs = .025), quantile(value, probs = .975))) %>%
+      mutate(path = factor(path, levels = c("a1", "b1", "a1b1", "a2", "b2", "a2b2", "c", "c_prime")))
+    
+  } else {
+    paths = create_paths(model, x_var, y_var) %>% 
+      select(a1:a2b2_cov_a2b2, -contains("sd"), -contains("cor"), -starts_with("cov")) %>% 
+      gather(path, value) %>% 
+      group_by(path) %>% 
+      summarize(median = median(value),
+                `Mdn [95% CI]` = sprintf("%.2f [%.2f, %.2f]", median(value), quantile(value, probs = .025), quantile(value, probs = .975))) %>%
+      mutate(path = factor(path, levels = c("a1", "b1", "a1b1", "a1b1_cov_a1b1", "a2", "b2", "a2b2", "a2b2_cov_a2b2", "c", "c_prime")))
+  }
+  paths %>%
+    arrange(path) %>%
+    select(-median) %>%
+    kable() %>%
+    kableExtra::kable_styling()
+}
+
+percent_mediated = function(model, x_var, y_var, between = FALSE) {
+  if (isTRUE(between)) {
+    paths = create_paths_between(model, x_var, y_var) %>% 
+      select(a1b1, a2b2, c) %>% 
+      gather(path, value) %>% 
+      group_by(path) %>% 
+      summarize(median = median(value)) %>%
+      select(path, median) %>%
+      spread(path, median) %>%
+      mutate(self = round((a1b1 / c) * 100, 0),
+             other = round((a2b2 / c) * 100, 0),
+             total = self + other)
+    
+  } else {
+    paths = create_paths(model, x_var, y_var) %>% 
+      select(a1b1_cov_a1b1, a2b2_cov_a2b2, c) %>% 
+      gather(path, value) %>% 
+      group_by(path) %>% 
+      summarize(median = median(value)) %>%
+      select(path, median) %>%
+      spread(path, median) %>%
+      mutate(self = round((a1b1_cov_a1b1 / c) * 100, 0),
+             other = round((a2b2_cov_a2b2 / c) * 100, 0),
+             total = self + other)
+    
+  }
+  paths  %>%
+    select(self, other, total) %>%
+    kable(caption = "percent mediated") %>%
+    kableExtra::kable_styling()
+}
+
+```
+
+## define aesthetics
+```{r}
+palette = c("#005f73", "#0a9396", "#ee9b00", "#ca6702")
+palette = c("study 1" = "#005f73",
+            "study 2" = "#0a9396",
+            "study 3" = "#ee9b00",
+            "study 4" = "#ca6702")
+
+palette_condition = c("self" = "#ee9b00",
+                      "control" = "#0a9396",
+                      "other" = "#005f73")
+palette_dv = c("self-relevance" = "#ee9b00",
+               "social relevance" = "#005f73",
+               "broadcast sharing" = "#5F0F40",
+               "narrowcast sharing" = "#D295BF")
+palette_topic = c("climate" = "#519872",
+                 "health" = "#5F0F40")
+
+plot_aes = theme_minimal() +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 12),
+        text = element_text(size = 16, family = "Futura Medium"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(color = "black"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+```
+
+## load data
+```{r}
+# cleaned study data
+study1 = read.csv("../data/study1_data.csv", stringsAsFactors = FALSE) %>%
+  select(-contains("emo"), -msg_read) %>%
+  mutate(study = "study 1",
+         SID = sprintf("%s_%s", study, SID))
+
+study2 = read.csv("../data/study2_data.csv", stringsAsFactors = FALSE) %>%
+  mutate(study = "study 2",
+         SID = sprintf("%s_%s", study, SID)) %>%
+  select(-n_articles, -sharing_type)  %>%
+  spread(sharing_type_key, msg_share) %>%
+  unique()
+
+study3 = read.csv("../data/study3_data.csv", stringsAsFactors = FALSE) %>%
+  mutate(study = "study 3",
+         SID = sprintf("%s_%s", study, SID)) %>%
+  select(-atlas, -global_mean, -parameter_estimate, -outlier, -run, -trial, -site, -trial_type) %>%
+  unique() %>%
+  rename("msg_share_narrow" = msg_share)
+
+study4 = read.csv("../data/study4_data.csv", stringsAsFactors = FALSE) %>%
+  mutate(study = "study 4",
+         SID = sprintf("%s_%s", study, SID)) %>%
+  filter(group == "comment") %>%
+  select(-group, -sharing_type, -item, -trial) %>%
+  spread(sharing_type_key, msg_share) %>%
+  unique()
+
+# merge study data
+combined = bind_rows(study1, study2, study3, study4) %>%
+  group_by(study) %>%
+  mutate(n_words = DescTools::Winsorize(n_words, probs = c(0, 0.99), na.rm=T), n_words) #winsorize extreme outliers
+
+merged = combined %>%
+  gather(sharing_type, msg_share, contains("share")) %>%
+  group_by(study, sharing_type) %>%
+  mutate(msg_share_z = scale(msg_share, scale = TRUE, center = TRUE),
+         msg_rel_self_z = scale(msg_rel_self, scale = TRUE, center = TRUE),
+         msg_rel_social_z = scale(msg_rel_social, scale = TRUE, center = TRUE)) 
+
+```
+
+# H1: sharing ~ self-relvance + social relevance {.tabset}
+> Greater (a) self-relevance and (b) social relevance ratings will be associated with stronger news sharing intentions and behavior.
+
+## run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 0 + msg_rel_self_z + msg_rel_social_z +
+                         (1 + msg_rel_self_z + msg_rel_social_z | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+fit_mod_alt = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 0 + msg_rel_self_z + msg_rel_social_z +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  group_by(study, sharing_type) %>%
+  nest() %>%
+  filter(!(study == "study 3" & sharing_type == "msg_share_broad")) %>%
+  mutate(test = ifelse(study == "study 4" | (study == "study 2" & sharing_type == "msg_share_narrow"),
+                       map(data, fit_mod_alt), map(data, fit_mod)))
+
+model_data = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed" & grepl("msg", term)) %>%
+  ungroup()
+
+predicted_data = model_lmer %>% 
+  mutate(`self-relevance` = map(test, ggeffects::ggpredict,
+                                terms = c("msg_rel_self_z [-3,-2,-1,0,1,2,3]")),
+         `social relevance` = map(test, ggeffects::ggpredict,
+                                  terms = c("msg_rel_social_z [-3,-2,-1,0,1,2,3]"))) %>%
+  select(-data, -test) %>%
+  gather(variable, predicted, contains("relevance")) %>%
+  unnest(cols = predicted) %>%
+  mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+
+predicted_random_data = model_lmer %>% 
+  mutate(`self-relevance` = map(test, ggeffects::ggpredict,
+                                terms = c("msg_rel_self_z [-3,-2,-1,0,1,2,3]", "SID"), type = "random"),
+         `social relevance` = map(test, ggeffects::ggpredict,
+                                  terms = c("msg_rel_social_z [-3,-2,-1,0,1,2,3]", "SID"), type = "random")) %>%
+  select(-data, -test) %>%
+  gather(variable, predicted, contains("relevance")) %>%
+  unnest(cols = predicted) %>%
+  mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+```
+
+## model summary table {.tabset}
+### full model
+```{r}
+table_model(model_data, sharing_type = TRUE)
+```
+
+### spread model
+```{r}
+table_model(model_data, sharing_type = TRUE, spread = TRUE)
+```
+
+## plot continuous relationships
+```{r, fig.width=7, fig.height=7}
+(plot_a = predicted_data %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_random_data, aes(group= group, color = study),
+              geom = "line", method = "lm", alpha = .1, linewidth = .05, se = FALSE) +
+  geom_ribbon(aes(fill = study, ymin = conf.low, ymax = conf.high), alpha = .2) +
+  geom_line(aes(color = study), size = 1) + 
+  facet_grid(sharing_type ~ variable) +
+  scale_fill_manual(name = "", values = palette) +
+  scale_color_manual(name = "", values = palette) +
+  coord_cartesian(ylim = c(-2, 2.5)) +
+  labs(x = "\nrelevance rating (SD)", y = "predicted sharing intention (SD)\n") + 
+  plot_aes)
+```
+
+## plot coefficients
+```{r, fig.width=8, fig.height=5}
+plot_model(model_data, palette, facet = "sharing_type", sharing_type = TRUE, size = 1)
+```
+
+## combined across studies {.tabset}
+```{r}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 0 + msg_rel_self_z + msg_rel_social_z +
+                         (1 + msg_rel_self_z + msg_rel_social_z | SID) +
+                         (1 | article_number) +
+                         (1 | study), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+
+model_lmer_combined = merged  %>%
+  group_by(sharing_type) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_combined = model_lmer_combined %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed" & grepl("msg", term)) %>%
+  ungroup()
+
+table_model(model_data_combined, study = FALSE, sharing_type = TRUE)
+```
+
+# H2: relevance ~ intervention condition {.tabset}
+> Compared to the control condition, the (a) self-focused condition will increase self-relevance ratings, and (b) other-focused condition will increase social relevance ratings.
+
+## H2a self-relevance {.tabset}
+### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_rel_self_z ~ 1 + article_cond +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  filter(sharing_type == "msg_share_broad") %>% #filter out duplicates
+  group_by(study) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_self = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+predicted_data_self = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("article_cond"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+### model summary table {.tabset}
+#### full model
+```{r}
+table_model(model_data_self)
+```
+
+#### spread model
+```{r}
+table_model(model_data_self, spread = TRUE)
+```
+
+### plot coefficients
+```{r}
+plot_model(filter(model_data_self, !term == "(Intercept)"), palette, size = 1)
+```
+
+### combined across studies 1, 2, and 4 {.tabset}
+Joint estimates across studies
+
+```{r}
+mod_h2a = lmerTest::lmer(msg_rel_self_z ~ 1 + article_cond +
+                         (1 | SID) +
+                         (1 | article_number),
+                         data = filter(merged, sharing_type == "msg_share_broad" & !study == "study 3"),
+                       control = lmerControl(optimizer = "bobyqa"))
+```
+
+#### table
+```{r}
+table_model(mod_h2a %>% broom.mixed::tidy(conf.int = TRUE) %>% filter(effect == "fixed"), study = FALSE)
+```
+
+#### summay
+```{r}
+summary(mod_h2a)
+```
+
+## H2b social relevance {.tabset}
+### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_rel_social_z ~ 1 + article_cond +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  filter(sharing_type == "msg_share_broad") %>% #filter out duplicates
+  group_by(study) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_social = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+predicted_data_social = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("article_cond"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+### model summary table {.tabset}
+#### full model
+```{r}
+table_model(model_data_social)
+```
+
+#### spread model
+```{r}
+table_model(model_data_social, spread = TRUE)
+```
+
+### plot coefficients
+```{r}
+plot_model(filter(model_data_social, !term == "(Intercept)"), palette, size = 1)
+```
+
+### combined across studies 1, 2, and 4 {.tabset}
+Joint estimates across studies
+
+```{r}
+mod_h2b = lmerTest::lmer(msg_rel_social_z ~ 1 + article_cond +
+                         (1 | SID) +
+                         (1 | article_number),
+                         data = filter(merged, sharing_type == "msg_share_broad" & !study == "study 3"),
+                       control = lmerControl(optimizer = "bobyqa"))
+```
+
+#### table
+```{r}
+table_model(mod_h2b %>% broom.mixed::tidy(conf.int = TRUE) %>% filter(effect == "fixed"), study = FALSE)
+```
+
+#### summay
+```{r}
+summary(mod_h2b)
+```
+
+# H3: sharing ~ intervention condition {.tabset}
+> Compared to the control condition, the (a) self-focused and (b) other-focused conditions will increase news sharing intentions and behavior.
+
+## run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 1 + article_cond +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  group_by(study, sharing_type) %>%
+  filter(!(study == "study 3" & sharing_type == "msg_share_broad")) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_share = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+predicted_data_share = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("article_cond"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+## model summary table {.tabset}
+### full model
+```{r}
+table_model(model_data_share, sharing_type = TRUE)
+```
+
+### spread model
+```{r}
+table_model(model_data_share, sharing_type = TRUE, spread = TRUE)
+```
+
+## plot coefficients
+```{r}
+plot_model(filter(model_data_share, !term == "(Intercept)"), palette, facet = "sharing_type", sharing_type = TRUE, size = 1)
+```
+
+
+## combined across studies 1, 2, and 4 {.tabset}
+Joint estimates across studies
+
+```{r}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 1 + article_cond +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer_combined = merged  %>%
+  filter(!study == "study 3") %>%
+  group_by(sharing_type) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_share_combined = model_lmer_combined %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+table_model(model_data_share_combined, study = FALSE, sharing_type = TRUE)
+```
+
+# combined H1-3 coefficient plot
+```{r, fig.width=12, fig.height=7, warning=FALSE}
+plot_b = model_data_share %>%
+  mutate(model = recode(sharing_type, "msg_share_broad" = "broadcast\nsharing",
+                        "msg_share_narrow" = "narrowcast\nsharing")) %>%
+  bind_rows(model_data_self %>% mutate(model = "self\nrelevance")) %>%
+  bind_rows(model_data_social %>% mutate(model = "social\nrelevance")) %>%
+  filter(!term == "(Intercept)") %>%
+  mutate(term = recode(term, "article_condother" = "other > control",
+                       "article_condself" = "self > control"),
+         term = factor(term, levels = c("self > control", "other > control"))) %>%
+  ggplot(aes(x = model, y = estimate, color = study)) +
+    geom_pointrange(aes( ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1, linewidth = 1) +
+    geom_hline(yintercept = 0, color = "grey50", linetype = "dotted") +
+    coord_flip() +
+    facet_grid(~ term) +
+    scale_fill_manual(name = "", values = palette) +
+    scale_color_manual(name = "", values = palette) +
+    labs(x = "", y = "\nstandardized regression coefficient\n") +
+    plot_aes
+
+(plot_a + labs(title = "H1: Correlational relationships") + plot_b + labs(title = "H2-3: Intervention effects")) +
+  patchwork::plot_layout(ncol = 2) & theme(legend.position = 'top') & plot_annotation(tag_levels = 'A')
+```
+
+# exploratory topic analyses {.tabset}
+These analyses explore whether the analyses testing H1-3 are moderated by topic (climate or health).
+
+## H1: sharing ~ self-relvance + social relevance {.tabset}
+### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 1 + msg_rel_self_z * topic + msg_rel_social_z * topic +
+                         (1 + msg_rel_self_z + msg_rel_social_z | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+fit_mod_alt = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 1 + msg_rel_self_z * topic + msg_rel_social_z * topic +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  group_by(study, sharing_type) %>%
+  nest() %>%
+  filter(!study == "study 1") %>%
+  filter(!(study == "study 3" & sharing_type == "msg_share_broad")) %>%
+  mutate(test = ifelse(grepl("2|4", study) & sharing_type == "msg_share_narrow",
+                       map(data, fit_mod_alt), map(data, fit_mod)))
+
+model_data = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+predicted_data = model_lmer %>% 
+  mutate(`self-relevance` = map(test, ggeffects::ggpredict,
+                                terms = c("msg_rel_self_z [-3,-2,-1,0,1,2,3]", "topic")),
+         `social relevance` = map(test, ggeffects::ggpredict,
+                                  terms = c("msg_rel_social_z [-3,-2,-1,0,1,2,3]", "topic"))) %>%
+  select(-data, -test) %>%
+  gather(variable, predicted, contains("relevance")) %>%
+  unnest(cols = predicted) %>%
+  mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+
+predicted_random_data = model_lmer %>% 
+  mutate(`self-relevance` = map(test, ggeffects::ggpredict,
+                                terms = c("msg_rel_self_z [-3,-2,-1,0,1,2,3]", "topic", "SID"), type = "random"),
+         `social relevance` = map(test, ggeffects::ggpredict,
+                                  terms = c("msg_rel_social_z [-3,-2,-1,0,1,2,3]", "topic", "SID"), type = "random")) %>%
+  select(-data, -test) %>%
+  gather(variable, predicted, contains("relevance")) %>%
+  unnest(cols = predicted) %>%
+  mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+```
+
+### model summary table {.tabset}
+#### full model
+```{r}
+table_model(model_data, sharing_type = TRUE, intercept = TRUE)
+```
+
+#### spread model
+```{r}
+table_model(model_data, sharing_type = TRUE, intercept = TRUE, spread = TRUE)
+```
+
+### plot continuous relationships
+```{r, fig.width=12, fig.height=9}
+(plot_a = predicted_data %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_random_data, aes(group = interaction(facet, group), color = group),
+              geom = "line", method = "lm", alpha = .15, linewidth = .1, se = FALSE) +
+  geom_ribbon(aes(fill = group, ymin = conf.low, ymax = conf.high), alpha = .2) +
+  geom_line(aes(color = group), size = 1) + 
+  facet_grid(study ~ variable + sharing_type) +
+  scale_fill_manual(name = "", values = palette_topic) +
+  scale_color_manual(name = "", values = palette_topic) +
+  #coord_cartesian(ylim = c(-2, 2.5)) +
+  labs(x = "\nrelevance rating (SD)", y = "predicted sharing intention (SD)\n") + 
+  plot_aes)
+```
+
+### plot coefficients
+```{r, fig.width=12, fig.height=7}
+plot_model(model_data, palette, facet = "sharing_type", sharing_type = TRUE, size = 1)
+```
+
+## H2: relevance ~ intervention condition {.tabset}
+### H2a self-relevance {.tabset}
+#### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_rel_self_z ~ 1 + article_cond * topic +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  filter(sharing_type == "msg_share_broad") %>% #filter out duplicates
+  filter(!study == "study 1") %>%
+  group_by(study) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_self = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+predicted_data_self = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("article_cond", "topic"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+#### model summary table {.tabset}
+##### full model
+```{r}
+table_model(model_data_self)
+```
+
+##### spread model
+```{r}
+table_model(model_data_self, spread = TRUE)
+```
+
+#### plot coefficients
+```{r, fig.width=12, fig.height=4}
+plot_predicted(predicted_data_self, facet = "~ x", palette, size = 1)
+```
+
+### H2b social relevance {.tabset}
+#### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_rel_social_z ~ 1 + article_cond * topic +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  filter(sharing_type == "msg_share_broad") %>% #filter out duplicates
+  filter(!study == "study 1") %>%
+  group_by(study) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_social = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+predicted_data_social = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("article_cond", "topic"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+#### model summary table {.tabset}
+##### full model
+```{r}
+table_model(model_data_social)
+```
+
+##### spread model
+```{r}
+table_model(model_data_social, spread = TRUE)
+```
+
+#### plot coefficients
+```{r, fig.width=12, fig.height=4}
+plot_predicted(predicted_data_social, facet = "~ x", palette, size = 1)
+```
+
+## H3: sharing ~ intervention condition {.tabset}
+### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 1 + article_cond * topic +
+                         (1 | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = merged  %>%
+  group_by(study, sharing_type) %>%
+  filter(!(study == "study 3" & sharing_type == "msg_share_broad")) %>%
+  filter(!study == "study 1") %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_share = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+predicted_data_share = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("article_cond", "topic"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+### model summary table {.tabset}
+#### full model
+```{r}
+table_model(model_data_share, sharing_type = TRUE)
+```
+
+#### spread model
+```{r}
+table_model(model_data_share, sharing_type = TRUE, spread = TRUE)
+```
+
+### plot coefficients
+```{r, fig.width=7, fig.height=9}
+plot_predicted(predicted_data_share, facet = "x ~ sharing_type", palette, size = 1, sharing_type = TRUE)
+```
+
+## combined H1-3 coefficient plot
+```{r, fig.width=22, fig.height=10, warning=FALSE}
+plot_b = model_data_share %>%
+  mutate(model = recode(sharing_type, "msg_share_broad" = "broadcast\nsharing",
+                        "msg_share_narrow" = "narrowcast\nsharing")) %>%
+  bind_rows(model_data_self %>% mutate(model = "self\nrelevance")) %>%
+  bind_rows(model_data_social %>% mutate(model = "social\nrelevance")) %>%
+  filter(!term == "(Intercept)") %>%
+  mutate(term = recode(term, "article_condother" = "other > control",
+                       "article_condself" = "self > control",
+                       "article_condother:topichealth" = "other > control x topic",
+                       "article_condself:topichealth" = "self > control x topic",
+                       "topichealth" = "topic (health)")) %>%
+  ggplot(aes(x = model, y = estimate, color = study)) +
+    geom_pointrange(aes( ymin = conf.low, ymax = conf.high), position = position_dodge(.5), size = 1, linewidth = 1) +
+    geom_hline(yintercept = 0, color = "grey50", linetype = "dotted") +
+    coord_flip() +
+    facet_grid(~ term) +
+    scale_fill_manual(name = "", values = palette) +
+    scale_color_manual(name = "", values = palette) +
+    labs(x = "", y = "\nstandardized  regression coefficient\n") +
+    plot_aes
+
+(plot_a + labs(title = "H1: Correlational relationships") + plot_b + labs(title = "H2-3: Intervention effects")) +
+  patchwork::plot_layout(ncol = 2) & theme(legend.position = 'top') & plot_annotation(tag_levels = 'A')
+```
+
+
+# exploratory word count analyses {.tabset}
+The following analyses examine the degree to which word count is positively associated with self and social relevance, and sharing intention ratings in Studies 1, 2, and 4.
+
+## descriptives
+```{r}
+words_ratings = merged %>%
+  filter(grepl("1|2|4", study)) %>%
+  filter(!(study == "study 1" & article_cond == "control")) %>%
+  group_by(study) %>%
+  mutate(n_c = n_words - mean(n_words, na.rm = TRUE)) %>%
+  select(-msg_share) %>%
+  spread(sharing_type, msg_share_z)
+
+merged %>%
+  filter(grepl("1|2|4", study)) %>%
+  filter(!(study == "study 1" & article_cond == "control")) %>%
+  group_by(study, article_cond) %>%
+  summarize(mean = mean(n_words, na.rm = TRUE),
+            sd = sd(n_words, na.rm = TRUE),
+            min = min(n_words, na.rm = TRUE),
+            max = max(n_words, na.rm = TRUE)) %>%
+  kable(digits = 2) %>%
+  kableExtra::kable_styling()
+```
+
+## self-relevance {.tabset}
+### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_rel_self_z ~ 1 + n_c +
+                         (1 + n_c | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = words_ratings  %>%
+  group_by(study) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_self_words = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+vals = seq(-20, 60, 10)
+
+predicted_data_self_words = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("n_c [vals]"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+
+predicted_random_data_self_words = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("n_c [vals]", "SID"), type = "random")) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+### model summary table {.tabset}
+#### full model
+```{r}
+table_model(model_data_self_words, intercept = TRUE)
+```
+
+#### spread model
+```{r}
+table_model(model_data_self_words, spread = TRUE, intercept = TRUE)
+```
+
+### plot continuous relationships
+```{r, fig.width=5, fig.height=5}
+predicted_data_self_words %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_random_data_self_words, aes(group = group, color = study),
+              geom = "line", method = "lm", alpha = .2, linewidth = .1, se = FALSE) +
+  geom_ribbon(aes(fill = study, ymin = conf.low, ymax = conf.high), alpha = .2) +
+  geom_line(aes(color = study), size = 1) + 
+  scale_fill_manual(name = "", values = palette) +
+  scale_color_manual(name = "", values = palette) +
+  labs(x = "\nnumber of words", y = "predicted self-relevance (SD)\n") + 
+  plot_aes
+```
+
+## social relevance {.tabset}
+### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_rel_social_z ~ 1 + n_c +
+                         (1 + n_c | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = words_ratings  %>%
+  group_by(study) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_social_words = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+vals = seq(-20, 60, 10)
+
+predicted_data_social_words = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("n_c [vals]"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+
+predicted_random_data_social_words = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("n_c [vals]", "SID"), type = "random")) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted)
+```
+
+### model summary table {.tabset}
+#### full model
+```{r}
+table_model(model_data_social_words, intercept = TRUE)
+```
+
+#### spread model
+```{r}
+table_model(model_data_social_words, spread = TRUE, intercept = TRUE)
+```
+
+### plot continuous relationships
+```{r, fig.width=5, fig.height=5}
+predicted_data_social_words %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_random_data_social_words, aes(group = group, color = study),
+              geom = "line", method = "lm", alpha = .15, linewidth = .2, se = FALSE) +
+  geom_ribbon(aes(fill = study, ymin = conf.low, ymax = conf.high), alpha = .2) +
+  geom_line(aes(color = study), size = 1) + 
+  scale_fill_manual(name = "", values = palette) +
+  scale_color_manual(name = "", values = palette) +
+  labs(x = "\nnumber of words", y = "predicted social relevance (SD)\n") + 
+  plot_aes
+```
+
+## sharing {.tabset}
+### run models
+```{r, fig.width=6, fig.height=6}
+fit_mod = function(data){
+  mod = lmerTest::lmer(msg_share_z ~ 1 + n_c +
+                         (1 + n_c | SID) +
+                         (1 | article_number), data = data,
+                       control = lmerControl(optimizer = "bobyqa"))
+  return(mod)
+}
+
+model_lmer = words_ratings  %>%
+  gather(sharing_type, msg_share_z, contains("share")) %>%
+  group_by(study, sharing_type) %>%
+  nest() %>%
+  mutate(test = map(data, fit_mod))
+
+model_data_share_words = model_lmer %>% 
+  mutate(tidied = map(test, broom.mixed::tidy, conf.int = TRUE)) %>%
+  select(-data, -test) %>%
+  unnest(cols = tidied) %>%
+  filter(effect == "fixed") %>%
+  ungroup()
+
+vals = seq(-20, 60, 10)
+
+predicted_data_share_words = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("n_c [vals]"))) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted) %>%
+  mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+
+predicted_random_data_share_words = model_lmer %>% 
+  mutate(predicted = map(test, ggeffects::ggpredict, terms = c("n_c [vals]", "SID"), type = "random")) %>%
+  select(-data, -test) %>%
+  unnest(cols = predicted) %>%
+  mutate(sharing_type = recode(sharing_type, "msg_share_broad" = "broadcast sharing",
+                               "msg_share_narrow" = "narrowcast sharing"))
+```
+
+### model summary table {.tabset}
+#### full model
+```{r}
+table_model(model_data_share_words, sharing_type = TRUE, intercept = TRUE)
+```
+
+#### spread model
+```{r}
+table_model(model_data_share_words, spread = TRUE, intercept = TRUE, sharing_type = TRUE)
+```
+
+### plot continuous relationships
+```{r, fig.width=7, fig.height=5}
+predicted_data_share_words %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_random_data_share_words, aes(group = group, color = study),
+              geom = "line", method = "lm", alpha = .15, linewidth = .2, se = FALSE) +
+  geom_ribbon(aes(fill = study, ymin = conf.low, ymax = conf.high), alpha = .2) +
+  geom_line(aes(color = study), size = 1) + 
+  facet_grid(~sharing_type) +
+  scale_fill_manual(name = "", values = palette) +
+  scale_color_manual(name = "", values = palette) +
+  labs(x = "\nnumber of words", y = "predicted sharing intention (SD)\n") + 
+  plot_aes
+```
+
+## combined plot
+```{r, fig.width=8, fig.height=8, warning=FALSE}
+predicted_random_data_combined = predicted_random_data_share_words %>%
+  mutate(model = recode(sharing_type, "broadcast sharing" = "broadcast\nsharing",
+                        "narrowcast sharing" = "narrowcast\nsharing")) %>%
+  bind_rows(predicted_random_data_self_words %>% mutate(model = "self\nrelevance")) %>%
+  bind_rows(predicted_random_data_social_words %>% mutate(model = "social\nrelevance")) %>%
+  mutate(model = factor(model, levels = c("self\nrelevance", "social\nrelevance", "broadcast\nsharing", "narrowcast\nsharing")),
+         x = x + mean(words_ratings$n_words, na.rm = TRUE)) # remove grand mean centering for interpretation
+  
+predicted_data_share_words %>%
+  mutate(model = recode(sharing_type, "broadcast sharing" = "broadcast\nsharing",
+                        "narrowcast sharing" = "narrowcast\nsharing")) %>%
+  bind_rows(predicted_data_self_words %>% mutate(model = "self\nrelevance")) %>%
+  bind_rows(predicted_data_social_words %>% mutate(model = "social\nrelevance")) %>%
+  mutate(model = factor(model, levels = c("self\nrelevance", "social\nrelevance", "broadcast\nsharing", "narrowcast\nsharing")),
+         x = x + mean(words_ratings$n_words, na.rm = TRUE)) %>% # remove grand mean centering for interpretation
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_random_data_combined, aes(group = group, color = study),
+              geom = "line", method = "lm", alpha = .15, linewidth = .15, se = FALSE) +
+  geom_ribbon(aes(fill = study, ymin = conf.low, ymax = conf.high), alpha = .2) +
+  geom_line(aes(color = study), size = 1) + 
+  facet_wrap(~model, ncol = 2) +
+  scale_fill_manual(name = "", values = palette) +
+  scale_color_manual(name = "", values = palette) +
+  labs(x = "\nnumber of words", y = "predicted rating (SD)\n") + 
+  plot_aes
+```
+
+<br><br>
+
+# bayesian parallel mediation {.tabset}
+Test whether there are indirect effects of the interventions on broad- and narrowcast sharing through self and social relevance
+
+## prep data
+```{r}
+# create self condition dataframe
+data_med_self = merged %>%
+  filter(!article_cond == "other") %>%
+  select(-msg_share, -msg_rel_self, -msg_rel_social) %>%
+  spread(sharing_type, msg_share_z) %>%
+  rename("msg_rel_self" = msg_rel_self_z,
+         "msg_rel_social" = msg_rel_social_z) %>%
+  select(study, SID, article_cond, article_number, msg_rel_social, msg_rel_self, msg_share_broad, msg_share_narrow)
+
+# create social condition dataframe
+data_med_other = merged %>%
+  filter(!article_cond == "self") %>%
+  select(-msg_share, -msg_rel_self, -msg_rel_social) %>%
+  spread(sharing_type, msg_share_z) %>%
+  rename("msg_rel_self" = msg_rel_self_z,
+         "msg_rel_social" = msg_rel_social_z) %>%
+  select(study, SID, article_cond, article_number, msg_rel_self, msg_rel_social, msg_share_broad, msg_share_narrow)
+
+# set seed
+seed = 6523
+```
+
+## self-focused condition {.tabset}
+### broadcast intentions {.tabset}
+#### study 1
+```{r}
+x_var = "self"
+y_var = "msg_share_broad"
+model_name = "mediation_self_broadcast_brm"
+study = "study 1"
+data = data_med_self %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_self_broad_study1 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_self_broad_study1, x_var, y_var, between = TRUE)
+percent_mediated(model_self_broad_study1, x_var, y_var, between = TRUE)
+```
+
+#### study 2
+```{r}
+x_var = "self"
+y_var = "msg_share_broad"
+model_name = "mediation_self_broadcast_brm"
+study = "study 2"
+data = data_med_self %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + article_cond + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_self_broad_study2 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_self_broad_study2, x_var, y_var)
+percent_mediated(model_self_broad_study2, x_var, y_var)
+```
+
+#### study 4
+```{r}
+x_var = "self"
+y_var = "msg_share_broad"
+model_name = "mediation_self_broadcast_brm"
+study = "study 4"
+data = data_med_self %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + article_cond + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_self_broad_study4 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_self_broad_study4, x_var, y_var)
+percent_mediated(model_self_broad_study4, x_var, y_var)
+```
+
+### narrowcast intentions {.tabset}
+#### study 1
+```{r}
+x_var = "self"
+y_var = "msg_share_narrow"
+model_name = "mediation_self_narrowcast_brm"
+study = "study 1"
+data = data_med_self %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_self_narrow_study1 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_self_narrow_study1, x_var, y_var, between = TRUE)
+percent_mediated(model_self_narrow_study1, x_var, y_var, between = TRUE)
+```
+
+#### study 2
+```{r}
+x_var = "self"
+y_var = "msg_share_narrow"
+model_name = "mediation_self_narrowcast_brm"
+study = "study 2"
+data = data_med_self %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + article_cond + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_self_narrow_study2 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_self_narrow_study2, x_var, y_var)
+percent_mediated(model_self_narrow_study2, x_var, y_var)
+```
+
+#### study 3
+```{r}
+x_var = "self"
+y_var = "msg_share_narrow"
+model_name = "mediation_self_narrowcast_brm"
+study = "study 3"
+data = data_med_self %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + article_cond + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_self_narrow_study3 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_self_narrow_study3, x_var, y_var)
+percent_mediated(model_self_narrow_study3, x_var, y_var)
+```
+
+#### study 4
+```{r}
+x_var = "self"
+y_var = "msg_share_narrow"
+model_name = "mediation_self_narrowcast_brm"
+study = "study 4"
+data = data_med_self %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + article_cond + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_self_narrow_study4 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_self_narrow_study4, x_var, y_var)
+percent_mediated(model_self_narrow_study4, x_var, y_var)
+```
+
+## other-focused condition {.tabset}
+### broadcast intentions {.tabset}
+#### study 1
+```{r}
+x_var = "other"
+y_var = "msg_share_broad"
+model_name = "mediation_other_broadcast_brm"
+study = "study 1"
+data = data_med_other %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_other_broad_study1 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_other_broad_study1, x_var, y_var, between = TRUE)
+percent_mediated(model_other_broad_study1, x_var, y_var, between = TRUE)
+```
+
+#### study 2
+```{r}
+x_var = "other"
+y_var = "msg_share_broad"
+model_name = "mediation_other_broadcast_brm"
+study = "study 2"
+data = data_med_other %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + article_cond + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_other_broad_study2 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_other_broad_study2, x_var, y_var)
+percent_mediated(model_other_broad_study2, x_var, y_var)
+```
+
+#### study 4
+```{r}
+x_var = "other"
+y_var = "msg_share_broad"
+model_name = "mediation_other_broadcast_brm"
+study = "study 4"
+data = data_med_other %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 + article_cond + msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_other_broad_study4 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_other_broad_study4, x_var, y_var)
+percent_mediated(model_other_broad_study4, x_var, y_var)
+```
+
+### narrowcast intentions {.tabset}
+#### study 1
+```{r}
+x_var = "other"
+y_var = "msg_share_narrow"
+model_name = "mediation_other_narrowcast_brm"
+study = "study 1"
+data = data_med_other %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 +  msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_other_narrow_study1 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_other_narrow_study1, x_var, y_var, between = TRUE)
+percent_mediated(model_other_narrow_study1, x_var, y_var, between = TRUE)
+```
+
+#### study 2
+```{r}
+x_var = "other"
+y_var = "msg_share_narrow"
+model_name = "mediation_other_narrowcast_brm"
+study = "study 2"
+data = data_med_other %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 +  msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_other_narrow_study2 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_other_narrow_study2, x_var, y_var)
+percent_mediated(model_other_narrow_study2, x_var, y_var)
+```
+
+#### study 3
+```{r}
+x_var = "other"
+y_var = "msg_share_narrow"
+model_name = "mediation_other_narrowcast_brm"
+study = "study 3"
+data = data_med_other %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 +  msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_other_narrow_study3 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_other_narrow_study3, x_var, y_var)
+percent_mediated(model_other_narrow_study3, x_var, y_var)
+```
+
+#### study 4
+```{r}
+x_var = "other"
+y_var = "msg_share_narrow"
+model_name = "mediation_other_narrowcast_brm"
+study = "study 4"
+data = data_med_other %>%
+  filter(study == !!study)
+
+model_formula = bf(msg_rel_social ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(msg_rel_self ~ article_cond + (1 + article_cond |i| SID)) +
+  bf(paste0(y_var, " ~ article_cond + msg_rel_social + msg_rel_self + (1 +  msg_rel_social + msg_rel_self |i| SID)")) +
+  set_rescor(FALSE)
+
+model_other_narrow_study4 = run_brm_model(model_name, model_formula, y_var, data, study)
+get_paths(model_other_narrow_study4, x_var, y_var)
+percent_mediated(model_other_narrow_study4, x_var, y_var)
+```
+
+## plots {.tabset}
+```{r}
+labels = data.frame(model = c("self", "other"),
+                    outcome = c("broadcast sharing", "narrowcast sharing"),
+                    path = c("self-relevance", "social relevance"),
+                    value = c(.4, .4))
+```
+
+### study 1
+```{r, fig.width = 9, fig.height = 4.5}
+study = 1
+plot_data_study1 = create_paths_between(model_self_broad_study1, "self", "msg_share_broad") %>%
+  mutate(study = sprintf("study %s", study)) %>%
+  bind_rows(create_paths_between(model_self_narrow_study1, "self", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study))) %>%
+  bind_rows(create_paths_between(model_other_broad_study1, "other", "msg_share_broad") %>%
+              mutate(study = sprintf("study %s", study))) %>%
+  bind_rows(create_paths_between(model_other_narrow_study1, "other", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study)))
+  
+plot_data_study1 %>%
+  select(model, outcome, a1b1, a2b2) %>% 
+  gather(path, value, -model, -outcome) %>%
+  mutate(path = ifelse(path == "a1b1", "self-relevance", "social relevance"),
+         outcome = ifelse(outcome == "msgsharebroad", "broadcast sharing",
+                   ifelse(outcome == "msgsharenarrow", "narrowcast sharing", outcome))) %>%
+  ggplot(aes(x = value, y = "", fill = path)) +
+  geom_rect(data = labels,
+            aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+            alpha = .5, fill = "grey") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  stat_halfeye(alpha = .8) +
+  facet_grid(model ~ outcome) +
+  scale_y_discrete(expand = c(.1, 0)) +
+  scale_x_continuous(limits = c(-.1, .4)) +
+  scale_fill_manual(values = palette_dv, name = "mediator") +
+  labs(x = "indirect effect", y = "") +
+  plot_aes
+```
+
+### study 2
+```{r, fig.width = 9, fig.height = 4.5}
+study = 2
+plot_data_study2 = create_paths(model_self_broad_study2, "self", "msg_share_broad") %>%
+  mutate(study = sprintf("study %s", study)) %>%
+  bind_rows(create_paths(model_self_narrow_study2, "self", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study))) %>%
+  bind_rows(create_paths(model_other_broad_study2, "other", "msg_share_broad") %>%
+              mutate(study = sprintf("study %s", study))) %>%
+  bind_rows(create_paths(model_other_narrow_study2, "other", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study)))
+  
+plot_data_study2 %>%
+  select(model, outcome, a1b1_cov_a1b1, a2b2_cov_a2b2) %>% 
+  gather(path, value, -model, -outcome) %>%
+  mutate(path = ifelse(path == "a1b1_cov_a1b1", "self-relevance", "social relevance"),
+         outcome = ifelse(outcome == "msgsharebroad", "broadcast sharing",
+                   ifelse(outcome == "msgsharenarrow", "narrowcast sharing", outcome))) %>%
+  ggplot(aes(x = value, y = "", fill = path)) +
+  geom_rect(data = labels,
+            aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+            alpha = .5, fill = "grey") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  stat_halfeye(alpha = .8) +
+  facet_grid(model ~ outcome) +
+  scale_y_discrete(expand = c(.1, 0)) +
+  scale_x_continuous(limits = c(-.1, .4)) +
+  scale_fill_manual(values = palette_dv, name = "mediator") +
+  labs(x = "indirect effect", y = "") +
+  plot_aes
+```
+
+### study 3
+```{r, fig.width = 6, fig.height = 4}
+study = 3
+plot_data_study3 = create_paths(model_self_narrow_study3, "self", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study)) %>%
+  bind_rows(create_paths(model_other_narrow_study3, "other", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study)))
+  
+plot_data_study3 %>%
+  select(model, outcome, a1b1_cov_a1b1, a2b2_cov_a2b2) %>% 
+  gather(path, value, -model, -outcome) %>%
+  mutate(path = ifelse(path == "a1b1_cov_a1b1", "self-relevance", "social relevance"),
+         outcome = ifelse(outcome == "msgsharebroad", "broadcast sharing",
+                   ifelse(outcome == "msgsharenarrow", "narrowcast sharing", outcome))) %>%
+  ggplot(aes(x = value, y = "", fill = path)) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  stat_halfeye(alpha = .8) +
+  facet_grid(model ~ outcome) +
+  scale_y_discrete(expand = c(.1, 0)) +
+  scale_fill_manual(values = palette_dv, name = "mediator") +
+  labs(x = "indirect effect", y = "") +
+  plot_aes
+```
+
+### study 4
+```{r, fig.width = 9, fig.height = 4.5}
+study = 4
+plot_data_study4 = create_paths(model_self_broad_study4, "self", "msg_share_broad") %>%
+  mutate(study = sprintf("study %s", study)) %>%
+  bind_rows(create_paths(model_self_narrow_study4, "self", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study))) %>%
+  bind_rows(create_paths(model_other_broad_study4, "other", "msg_share_broad") %>%
+              mutate(study = sprintf("study %s", study))) %>%
+  bind_rows(create_paths(model_other_narrow_study4, "other", "msg_share_narrow") %>%
+              mutate(study = sprintf("study %s", study)))
+  
+plot_data_study4 %>%
+  select(model, outcome, a1b1_cov_a1b1, a2b2_cov_a2b2) %>% 
+  gather(path, value, -model, -outcome) %>%
+  mutate(path = ifelse(path == "a1b1_cov_a1b1", "self-relevance", "social relevance"),
+         outcome = ifelse(outcome == "msgsharebroad", "broadcast sharing",
+                   ifelse(outcome == "msgsharenarrow", "narrowcast sharing", outcome))) %>%
+  ggplot(aes(x = value, y = "", fill = path)) +
+  geom_rect(data = labels,
+            aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+            alpha = .5, fill = "grey") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  stat_halfeye(alpha = .8) +
+  facet_grid(model ~ outcome) +
+  scale_y_discrete(expand = c(.1, 0)) +
+  scale_x_continuous(limits = c(-.1, .4)) +
+  scale_fill_manual(values = palette_dv, name = "mediator") +
+  labs(x = "indirect effect", y = "") +
+  plot_aes
+```
+
+# cite packages
+```{r}
+report::cite_packages()
+```
