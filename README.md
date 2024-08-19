@@ -1,17 +1,21 @@
 # sharing-motivation
 This repository contains code for the analyses reported in the following manuscript:
 
-**Neural and behavioral evidence that message self- and social relevance motivate content sharing**
+**[Perceived self and social relevance of content motivates news sharing across cultures and topics](https://osf.io/preprints/psyarxiv/z8946)**
 
 
 ## Compiled analysis files
 
-The main analyses from fMRI study 1 are reported [here](https://cnlab.github.io/sharing-motivation/analysis/study1_analysis) and the supplementary analyses are reported [here](https://cnlab.github.io/sharing-motivation/analysis/study1_supplementary_analyses).
-
-The main analyses from follow-up behavioral study 2 are reported [here](https://cnlab.github.io/sharing-motivation/analysis/study2_analysis) and the supplementary analyses are reported [here](https://cnlab.github.io/sharing-motivation/analysis/study2_supplementary_analyses).
+* [Combined analyses](https://cnlab.github.io/sharing-motivation/analysis/combined_analyses)
+* [Study 1](https://cnlab.github.io/sharing-motivation/analysis/study1_analyses)
+* [Study 2](https://cnlab.github.io/sharing-motivation/analysis/study2_analyses)
+* [Study 3](https://cnlab.github.io/sharing-motivation/analysis/study3_analyses)
+* [Study 3 supplementary material](https://cnlab.github.io/sharing-motivation/analysis/study3_supplementary_analyses)
+* [Study 4](https://cnlab.github.io/sharing-motivation/analysis/study4_analyses)
 
 ## Analysis reproduction
-To reproduce the analyses in the manuscript, first execute the study cleaning scripts, then the study prep scripts, and finally the analysis scripts (`study1_analysis.Rmd`, `study2_analysis.Rmd`, `study1_supplementary_analyses.Rmd`, `study2_supplementary_analyses.Rmd`). Given that raw data is required to run the cleaning and prep scripts, folks outside the research team will only be able to reproduce the analysis scripts.
+
+To reproduce the analyses in the manuscript, first execute the study cleaning scripts, then the study prep scripts, and finally the analysis scripts. Given that raw data is required to run the cleaning and prep scripts, folks outside the research team will only be able to reproduce the analysis scripts.
 
 ## Directory structure
 
@@ -22,30 +26,37 @@ To reproduce the analyses in the manuscript, first execute the study cleaning sc
 
 ```
 ├── analysis
-│	├── analysis.Rproj
-│	├── indirectMLM.R
-│	├── models
-│	│	├── model_mediation_other.RDS
-│	│	├── model_mediation_other_alternative.RDS
-│	│	├── model_mediation_self.RDS
-│	│	└── model_mediation_self_alternative.RDS
-│	├── study1_analysis.Rmd
-│	├── study1_analysis.html
-│	├── study1_supplementary_analyses.Rmd
-│	├── study1_supplementary_analyses.html
-│	├── study2_analysis.Rmd
-│	├── study2_analysis.html
-│	├── study2_supplementary_analyses.Rmd
-│	└── study2_supplementary_analyses.html
+│   ├── analysis.Rproj
+│   ├── combined_analyses.Rmd
+│   ├── combined_analyses.html
+│   ├── study1_analyses.Rmd
+│   ├── study1_analyses.html
+│   ├── study1_demographics.Rmd
+│   ├── study1_demographics.html
+│   ├── study2_analyses.Rmd
+│   ├── study2_analyses.html
+│   ├── study3_analyses.Rmd
+│   ├── study3_analyses.html
+│   ├── study3_supplementary_analyses.Rmd
+│   ├── study3_supplementary_analyses.html
+│   ├── study4_analyses.Rmd
+│   ├── study4_analyses.html
+│   ├── study4_demographics.Rmd
+│   └── study4_demographics.html
 ├── cleaning
-│	├── state_codes.csv
-│	├── study1_analysis_prep.Rmd
-│	├── study2_analysis_prep.Rmd
-│	└── study2_cleaning.Rmd
+│   ├── state_codes.csv
+│   ├── study1_analysis_prep.Rmd
+│   ├── study2_analysis_prep.Rmd
+│   ├── study3_analysis_prep.Rmd
+│   ├── study4_analysis_prep.Rmd
+│   └── study4_cleaning.Rmd
 ├── data
-│	├── study1_data.csv
-│	├── study2_data.csv
-│	└── study2_n_words.csv
+│   ├── study1_data.csv
+│   ├── study1_exploratory_dvs.csv
+│   ├── study2_data.csv
+│   ├── study3_data.csv
+│   ├── study4_data.csv
+│   └── study4_demo.csv
 └── stimuli
     └── articles.csv
 ```
