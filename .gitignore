@@ -6,3 +6,5 @@
 *demo.csv
 *comments.csv
 raw/
+models/
+*.RDS
