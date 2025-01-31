@@ -12,7 +12,7 @@ This repository contains code for the analyses reported in the following manuscr
 * [Study 2](https://cnlab.github.io/sharing-motivation/analysis/study2_analyses)
 * [Study 3](https://cnlab.github.io/sharing-motivation/analysis/study3_analyses)
 * [Study 3 alternatively defined ROIs](https://cnlab.github.io/sharing-motivation/analysis/study3_alt_roi_analyses)
-* [Study 3 exploratory](https://cnlab.github.io/sharing-motivation/analysis/study3_analyses_exploratory)
+* [Study 3 exploratory individual difference analyses](https://cnlab.github.io/sharing-motivation/analysis/study3_analyses_exploratory)
 * [Study 3 sensitivity analyses](https://cnlab.github.io/sharing-motivation/analysis/study3_analyses_sensitivity)
 * [Study 4](https://cnlab.github.io/sharing-motivation/analysis/study4_analyses)
 
