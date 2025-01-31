@@ -1,0 +1,196 @@
+---
+title: "Study 3 exploratory individual difference analyses"
+author: "Dani Cosme"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = FALSE, dpi = 300)
+
+options(scipen=999)
+```
+
+In this report, we reproduce the exploratory individual difference analyses from Study 3.
+
+# prep data {.tabset}
+First, we load the relevant packages, define functions and plotting aesthetics, and load and tidy the data.
+
+## load packages
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, broom, knitr, kableExtra, install = TRUE)
+```
+
+## define functions
+```{r}
+table_model = function(model, print = TRUE) {
+  model %>%
+    broom::tidy(., conf.int = TRUE) %>%
+    rename("SE" = std.error,
+           "t" = statistic,
+           "p" = p.value) %>%
+    mutate(term = gsub("`", "", term),
+           term = gsub("social_cognitive", "social cognitive", term),
+           term = gsub("msg_rel_self", "self-relevance", term),
+           term = gsub("msg_rel_social", "social relevance", term),
+           t = round(t, 2),
+           p = ifelse(p < .001, "< .001",
+               ifelse(p > .999, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
+           `b [95% CI]` = sprintf("%.2f [%0.2f, %.2f]", estimate, conf.low, conf.high)) %>%
+    select(term, `b [95% CI]`, t, p) %>%
+    arrange(term) %>%
+    kable() %>%
+    kableExtra::kable_styling()
+}
+```
+
+## define aesthetics
+```{r}
+palette = c("#345995", "#00C4E2", "white", "#FEC601", "#F43C13")
+
+plot_aes = theme_minimal() +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 12),
+        text = element_text(size = 16, family = "Futura Medium"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(color = "black"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+```
+
+
+## load and tidy data {.tabset}
+```{r}
+ind_diffs = readRDS("~/Library/CloudStorage/Box-Box/BB-PRIME_Data_834294/qualtrics/bbprime_scored_data_long.RDS") %>%
+  filter(grepl("PRE", survey_name)) %>%
+  filter(!score == "NaN") %>%
+  unite(scale_name, scale_name, scored_scale) %>%
+  select(SID, scale_name, score) %>%
+  mutate(score = as.numeric(score),
+         scale_name = gsub("GeneralConcern", "Concern", scale_name),
+         scale_name = gsub("_concerns|_motive", "", scale_name),
+         scale_name = gsub("MAU", "NewsSharing", scale_name),
+         scale_name = gsub("BigFive", "BFI-10", scale_name),
+         scale_name = gsub("ISM", "SharingMotive", scale_name)) %>%
+  filter(!is.na(scale_name)) %>%
+  filter(!grepl("IRI_mean|IAF_mean|CovidVaccine_mean|GeneralConcern_mean|BFI-10_mean|VHS_mean|Values_mean|SCC_mean|SharingMotive_mean|SharingMotive_share|NewsSharing_other|NewsSharing_mean|Concern_mean$|CCS", scale_name)) %>%
+  mutate(scale_name = gsub("_mean", "", scale_name)) %>%
+  filter(!grepl("HLS_", scale_name)) %>%
+  spread(scale_name, score)
+
+ratings_corr = read.csv("../data/study3_data.csv") %>%
+  select(-atlas, -global_mean, -parameter_estimate, -outlier) %>%
+  unique() %>%
+  group_by(SID, article_cond, topic) %>%
+  summarize(msg_share = mean(msg_share, na.rm = TRUE),
+            msg_rel_self = mean(msg_rel_self, na.rm = TRUE),
+            msg_rel_social = mean(msg_rel_social, na.rm = TRUE)) %>%
+  gather(item, value, contains("msg")) %>%
+  spread(article_cond, value) %>%
+  mutate(`self - control` = self - control,
+         `other - control` = other - control,
+         item = gsub("msg_", "", item),
+         item = gsub("rel_self", "self-relevance", item),
+         item = gsub("rel_social", "social relevance", item),
+         item = gsub("share", "narrowcast sharing", item)) %>%
+  select(-self, -other, -control) %>%
+  gather(diff, value, contains("control"))
+
+relevance = read.csv("../data/study3_data.csv") %>%
+  select(-atlas, -global_mean, -parameter_estimate, -outlier) %>%
+  unique() %>%
+  group_by(SID, article_cond) %>%
+  summarize(msg_rel_self = mean(msg_rel_self, na.rm = TRUE),
+            msg_rel_social = mean(msg_rel_social, na.rm = TRUE)) %>%
+  filter(!article_cond == "control") %>%
+  ungroup() %>%
+  mutate(msg_rel_self = scale(msg_rel_self),
+         msg_rel_social = scale(msg_rel_social))
+
+sharing = read.csv("../data/study3_data.csv") %>%
+  select(-atlas, -global_mean, -parameter_estimate, -outlier) %>%
+  unique() %>%
+  group_by(SID, article_cond) %>%
+  summarize(msg_share = mean(msg_share, na.rm = TRUE)) %>%
+  spread(article_cond, msg_share) %>%
+  mutate(`self - control` = self - control,
+         `other - control` = other - control) %>%
+  select(-self, -other, -control) 
+  
+rois = read.csv("../data/study3_data.csv") %>%
+  filter(outlier == "no" | is.na(outlier)) %>%
+  mutate(atlas = gsub("mentalizing", "social_cognitive", atlas)) %>%
+  filter(atlas %in% c("self-referential", "social_cognitive")) %>%
+  group_by(SID, article_cond, atlas) %>%
+  summarize(value = mean(parameter_estimate, na.rm = TRUE)) %>%
+  spread(atlas, value) %>%
+  filter(!article_cond == "control") %>%
+  ungroup() %>%
+  mutate(`self-referential` = scale(`self-referential`),
+         social_cognitive = scale(social_cognitive))
+
+merged = ratings_corr %>%
+  left_join(., ind_diffs) 
+
+merged_roi = sharing %>%
+  left_join(., relevance) %>%
+  left_join(., rois) 
+```
+
+# correlations
+Generate correlation matrix
+
+```{r, fig.width=10, fig.height=12}
+cor_fun = function(data) purrr::pmap(var.names, ~ cor.test(data[[.x]], data[[.y]])) %>% 
+  map_df(broom::tidy) %>% 
+  cbind(var.names, .)
+
+var.names = expand.grid(V1 = "value", V2 = names(ind_diffs)[!grepl("SID", names(ind_diffs))])
+
+cors = merged %>%
+  group_by(item, topic, diff) %>%
+  nest() %>%
+  mutate(
+    test = purrr::map(data, cor_fun)
+  ) %>%
+  unnest(test, .drop = TRUE) %>%
+  mutate_if(is.numeric, round, 2) %>%
+  select(-data)
+
+cors_table = cors %>%
+  mutate(r_95 = sprintf("%.02f [%.02f, %.02f]", estimate, conf.low, conf.high),
+         significance = ifelse(p.value < .05, "*", "")) %>%
+  select(V1, V2, estimate, r_95, significance) %>%
+  unique() %>%
+  mutate(item = factor(item, levels = c("self-relevance", "social relevance", "narrowcast sharing")),
+         type = case_when(grepl("Values|IRI|BFI|IAF", V2) ~ "personality",
+                          grepl("News|Sharing", V2) ~ "media",
+                          grepl("Concern|HLS", V2) ~ "topic"))
+
+cors_table %>%
+  ggplot(aes(item, V2, fill = estimate)) +
+  geom_tile(color = "white") +
+  scale_fill_gradientn(name = "correlation", colors = palette, lim = c(-1,1)) +
+  geom_text(aes(label = estimate), size = 4) +
+  facet_grid(type ~topic + diff, scales = "free_y", space = "free_y") +
+  labs(x = "", y = "") + 
+  plot_aes +
+  guides(fill = guide_colorbar(title = "correlation  ",
+                               title.vjust = 1.1,
+                               barwidth = 10,
+                               barheight = 1)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```

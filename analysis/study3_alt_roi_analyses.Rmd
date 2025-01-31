@@ -1,0 +1,424 @@
+---
+title: "Study 3 alternative ROI analyses"
+author: "Dani Cosme"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, cache = FALSE, dpi = 300)
+
+options(scipen=999)
+```
+
+In this report, we reproduce the sensitivity analyses testing H4-6 in Study 3 reported in Supplementary Material using alternatively defined ROIs.
+
+Given the high correlation between the preregistered Neurosynth ROIs, we conducted sensitivity analyses using ROIs from [Scholz et al. (2017) A neural model of valuation and information virality](https://www.pnas.org/doi/10.1073/pnas.1615259114).
+
+In order to maximize the differentiation between the self-referential and social cognitive ROIs, we removed the PCC/precuneus cluster from the social cognitive ROI as it overlapped with the self-referential ROI.
+
+# prep data {.tabset}
+First, we load the relevant packages, define functions and plotting aesthetics, and load and tidy the data.
+
+## load packages
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, purrr, fs, knitr, lmerTest, ggeffects, kableExtra, boot, devtools, install = TRUE)
+devtools::install_github("hadley/emo")
+```
+
+## define functions
+```{r}
+source("https://gist.githubusercontent.com/benmarwick/2a1bb0133ff568cbe28d/raw/fb53bd97121f7f9ce947837ef1a4c65a73bffb3f/geom_flat_violin.R")
+
+# MLM results table function
+table_model = function(model_data) {
+  model_data %>%
+  broom.mixed::tidy(conf.int = TRUE) %>%
+  filter(effect == "fixed") %>%
+  rename("SE" = std.error,
+         "t" = statistic,
+         "p" = p.value) %>%
+  select(-group, -effect) %>%
+  mutate_at(vars(-contains("term"), -contains("p")), round, 2) %>%
+  mutate(term = gsub("article_cond", "", term),
+         term = gsub("\\(Intercept\\)", "intercept", term),
+         term = gsub("article_condother", "other", term),
+         term = gsub("article_condself", "self", term),
+         term = gsub("topichealth", "topic (health)", term),
+         term = gsub("self_referential", "self-referential", term),
+         term = gsub("msg_rel_self_z_z", "self-relevance", term),
+         term = gsub("msg_rel_social_z_z", "social relevance", term),
+         term = gsub("self_referential", "self-referential", term),
+         term = gsub("social_cognitive", "social cognitive", term),
+         term = gsub(":", " x ", term),
+         p = ifelse(p < .001, "< .001",
+             ifelse(p > .999, "1.000", gsub("0.(.*)", ".\\1", sprintf("%.3f", p)))),
+         `b [95% CI]` = sprintf("%.2f [%0.2f, %.2f]", estimate, conf.low, conf.high)) %>%
+  select(term, `b [95% CI]`, df, t, p)
+}
+
+simple_slopes = function(model, var, moderator, continuous = TRUE) {
+  
+  if (isTRUE(continuous)) {
+    emmeans::emtrends(model, as.formula(paste("~", moderator)), var = var) %>%
+      data.frame() %>%
+      rename("trend" = 2) %>%
+      mutate(`b [95% CI]` = sprintf("%.2f [%.2f, %.2f]", trend, asymp.LCL, asymp.UCL)) %>%
+      select(!!moderator, `b [95% CI]`) %>%
+      kable()  %>%
+      kableExtra::kable_styling()
+    
+  } else {
+    confint(emmeans::contrast(emmeans::emmeans(model, as.formula(paste("~", var, "|", moderator))), "revpairwise", by = moderator, adjust = "none")) %>%
+      data.frame() %>%
+      filter(grepl("control", contrast)) %>%
+      mutate(`b [95% CI]` = sprintf("%.2f [%.2f, %.2f]", estimate, asymp.LCL, asymp.UCL)) %>%
+      select(contrast, !!moderator, `b [95% CI]`) %>%
+      arrange(contrast) %>%
+      kable()  %>%
+      kableExtra::kable_styling()
+  }
+}
+
+```
+
+## define aesthetics
+```{r}
+palette_cond = c("self" = "#ee9b00",
+                      "control" = "#0a9396",
+                      "other" = "#005f73")
+palette_roi = c("self-referential" = "#ee9b00",
+               "social cognitive" = "#005f73")
+palette_dv = c("self-relevance" = "#ee9b00",
+               "social relevance" = "#005f73",
+               "narrowcast sharing" = "#D295BF")
+palette_topic = c("climate" = "#519872",
+                 "health" = "#3A3357")
+
+plot_aes = theme_minimal() +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 12),
+        text = element_text(size = 16, family = "Futura Medium"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(color = "black"),
+        axis.line = element_line(colour = "black"),
+        axis.ticks.y = element_blank())
+```
+
+## load and tidy data {.tabset}
+```{r}
+merged_all = read.csv("../data/study3_data.csv")
+
+ratings_z = merged_all %>%
+  select(SID, trial, article_number, article_cond, msg_rel_self, msg_rel_social, msg_share) %>%
+  unique() %>%
+  mutate(msg_share_z = scale(msg_share, scale = TRUE, center = TRUE),
+         msg_rel_self_z = scale(msg_rel_self, center = TRUE, scale = TRUE),
+         msg_rel_social_z = scale(msg_rel_social, center = TRUE, scale = TRUE))
+
+merged = merged_all %>%
+  mutate(atlas = gsub("mentalizing", "social_cognitive", atlas)) %>%
+  filter(outlier == "no" | is.na(outlier)) %>%
+  group_by(SID, atlas) %>%
+  mutate(parameter_estimate_std = parameter_estimate / sd(parameter_estimate, na.rm = TRUE)) %>%
+  left_join(., ratings_z)
+
+merged_wide = merged %>%
+  filter(atlas %in% c("self-referential", "social_cognitive")) %>%
+  select(SID, site, trial, article_number, topic, article_cond, msg_share, msg_share_z,
+         msg_rel_self, msg_rel_self_z, msg_rel_social, msg_rel_social_z, atlas, parameter_estimate_std) %>%
+  spread(atlas, parameter_estimate_std) %>%
+  rename("self_referential" = `self-referential`)
+
+merged_wide_alt = merged %>%
+  filter(atlas %in% c("pnas_self", "pnas_social_cognitive_nopc")) %>%
+  select(SID, site, trial, article_number, topic, article_cond, msg_share, msg_share_z,
+         msg_rel_self, msg_rel_self_z, msg_rel_social, msg_rel_social_z, atlas, parameter_estimate_std) %>%
+  spread(atlas, parameter_estimate_std) %>%
+  rename("self_referential" = pnas_self,
+         "social_cognitive" = pnas_social_cognitive_nopc) 
+
+```
+
+
+# ROI correlations
+Compared to the preregistered Neurosynth ROIs (r = .94, 95% CI [.94, .94]), the correlation between the alternative ROIs are substantially reduced.
+
+```{r}
+merged_wide_alt %>%
+  rmcorr::rmcorr(as.factor(SID), social_cognitive, self_referential, data = .)
+```
+
+# H4: relevance ~ ROI activity 
+
+> Greater activity in the (a) self-referential region of interest (ROI) will be associated with higher self-relevance ratings, and (b) greater activity in the social cognitive ROI will be associated with higher social relevance ratings.
+
+## self-referential ROI {.tabset}
+
+```{r}
+mod_h4a =  lmer(msg_rel_self_z ~ self_referential + (1 + self_referential | SID),
+               data = merged_wide_alt,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h4a = table_model(mod_h4a)
+
+table_h4a %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h4a)
+```
+
+## social cognitive ROI {.tabset}
+
+```{r}
+mod_h4b = lmer(msg_rel_social_z ~ social_cognitive + (1 + social_cognitive | SID),
+               data = merged_wide_alt,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h4b = table_model(mod_h4b)
+
+table_h4b %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h4b)
+```
+
+## combined plot
+```{r}
+vals = seq(-4.5, 4.5, .1)
+predicted_h4 = ggeffects::ggpredict(mod_h4a, c("self_referential [vals]")) %>%
+  data.frame() %>%
+  mutate(roi = "self-referential",
+         variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h4b, c("social_cognitive [vals]")) %>%
+              data.frame() %>%
+              mutate(roi = "social cognitive",
+                     variable = "social relevance"))
+
+predicted_sub_h4 = ggeffects::ggpredict(mod_h4a, terms = c("self_referential [vals]", "SID"), type = "random") %>%
+  data.frame() %>%
+  mutate(roi = "self-referential",
+         variable = "self-relevance") %>%
+  bind_rows(ggeffects::ggpredict(mod_h4b, c("social_cognitive [vals]", "SID"), type = "random") %>%
+              data.frame() %>%
+              mutate(roi = "social cognitive",
+                     variable = "social relevance"))
+
+predicted_h4 %>%
+  ggplot(aes(x, predicted)) +
+  stat_smooth(data = predicted_sub_h4, aes(group = group, color = roi), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = roi), alpha = .5, color = NA) +
+  geom_line(aes(color = roi), size = 2) +
+  facet_grid(~variable) +
+  scale_color_manual(name = "", values = palette_roi, guide = FALSE) +
+  scale_fill_manual(name = "", values = palette_roi, guide = FALSE) +
+  labs(x = "\nROI activity (SD)", y = "predicted rating\n") +
+  plot_aes
+```
+
+# H5: sharing ~ ROI activity {.tabset}
+
+> Greater activity in the (a) self-referential and (b) social cognitive ROIs will be associated with stronger news sharing intentions.
+
+## self-referential ROI {.tabset}
+
+```{r}
+mod_h5a = lmer(msg_share_z ~ self_referential + (1 + self_referential | SID),
+              data = merged_wide_alt,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h5a = table_model(mod_h5a)
+
+table_h5a %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h5a)
+```
+
+## social cognitive ROI {.tabset}
+
+```{r}
+mod_h5b = lmer(msg_share_z ~ social_cognitive + (1 + social_cognitive | SID),
+              data = merged_wide_alt,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h5b = table_model(mod_h5b)
+
+table_h5b %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h5b)
+```
+
+## combined plot
+```{r}
+vals = seq(-4.5, 4.5, .1)
+
+predicted_h5 = ggeffects::ggpredict(mod_h5a, c("self_referential [vals]")) %>%
+  data.frame() %>%
+  mutate(roi = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h5b, c("social_cognitive [vals]")) %>%
+              data.frame() %>%
+              mutate(roi = "social cognitive")) %>%
+  mutate(roi = factor(roi, levels = c("self-referential", "social cognitive")))
+
+predicted_sub_h5 = ggeffects::ggpredict(mod_h5a, terms = c("self_referential [vals]", "SID"), type = "random") %>%
+  data.frame() %>%
+  mutate(roi = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h5b, c("social_cognitive [vals]", "SID"), type = "random") %>%
+              data.frame() %>%
+              mutate(roi = "social cognitive")) %>%
+  mutate(roi = factor(roi, levels = c("self-referential", "social cognitive")))
+
+predicted_h5 %>%
+  ggplot(aes(x = x, y = predicted, color = roi, fill = roi)) +
+  stat_smooth(data = predicted_sub_h5, aes(group = group), geom ='line', method = "lm", alpha = .1, size = 1, se = FALSE) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = .2, color = NA) +
+  geom_line(size = 2) +
+  facet_grid(~roi) +
+  scale_color_manual(name = "", values = palette_roi) +
+  scale_fill_manual(name = "", values = palette_roi) +
+  labs(y = "predicted sharing intention\n", x = "\nROI activity (SD)") +
+  plot_aes +
+  theme(legend.position = "none")
+```
+
+# H6 ROI activity ~ intervention condition {.tabset}
+
+> Compared to the control condition, the (a) self-focused condition will increase activity in the self-referential ROI, and the (b) other-focused condition will increase activity in the social cognitive ROI.
+
+## self-referential ROI {.tabset}
+
+```{r}
+mod_h6a = lmer(self_referential ~ article_cond + (1 + article_cond | SID),
+              data = merged_wide_alt,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h6a = table_model(mod_h6a)
+
+table_h6a %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h6a)
+```
+
+## social cognitive ROI {.tabset}
+
+```{r}
+mod_h6b = lmer(social_cognitive ~ article_cond + (1 + article_cond | SID),
+              data = merged_wide_alt,
+              control = lmerControl(optimizer = "bobyqa"))
+```
+
+### model table
+```{r}
+table_h6b = table_model(mod_h6b)
+
+table_h6b %>%
+    kable()  %>%
+    kableExtra::kable_styling()
+```
+
+### summary
+```{r}
+summary(mod_h6b)
+```
+
+## combined plot
+```{r}
+predicted_h6 = ggeffects::ggpredict(mod_h6a, c("article_cond")) %>%
+  data.frame() %>%
+  mutate(atlas = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h6b, c("article_cond")) %>%
+              data.frame() %>%
+              mutate(atlas = "social cognitive")) %>%
+  mutate(x = factor(x, levels = c("self", "control", "other")),
+         atlas = factor(atlas, levels = c("self-referential", "social cognitive")))
+
+predicted_sub_h6 = ggeffects::ggpredict(mod_h6a, terms = c("article_cond", "SID"), type = "random") %>%
+  data.frame() %>%
+  mutate(atlas = "self-referential") %>%
+  bind_rows(ggeffects::ggpredict(mod_h6b, c("article_cond", "SID"), type = "random") %>%
+              data.frame() %>%
+              mutate(atlas = "social cognitive")) %>%
+  mutate(x = factor(x, levels = c("self", "control", "other")),
+         atlas = factor(atlas, levels = c("self-referential", "social cognitive")))
+
+predicted_h6 %>%
+  ggplot(aes(x = x, y = predicted)) +
+  stat_summary(data = predicted_sub_h6, aes(group = group), fun = "mean", geom = "line",
+               size = .1, color = "grey50") +
+  stat_summary(aes(group = group), fun = "mean", geom = "line", size = 1) +
+  geom_pointrange(aes(color = x, ymin = conf.low, ymax = conf.high), size = .75) +
+  facet_grid(~atlas) +
+  scale_color_manual(name = "", values = palette_cond, guide = "none") +
+  scale_alpha_manual(name = "", values = c(1, .5)) +
+  labs(x = "", y = "ROI activity (SD)\n") +
+  plot_aes
+```
+
+# combined table
+```{r}
+table_h4a %>% mutate(DV = "H4a: Self-relevance") %>%
+  bind_rows(table_h4b %>% mutate(DV = "H4b: Social relevance")) %>%
+  bind_rows(table_h5a %>% mutate(DV = "H5a: Sharing intention")) %>%
+  bind_rows(table_h5b %>% mutate(DV = "H5b: Sharing intention")) %>%
+  bind_rows(table_h6a %>% mutate(DV = "H6a: Self-referential ROI")) %>%
+  bind_rows(table_h6b %>% mutate(DV = "H6b: Socia cognitive ROI")) %>%
+  select(DV, everything()) %>%
+  kable() %>%
+  kable_styling()
+```
+
+# cite packages
+```{r}
+report::cite_packages()
+```

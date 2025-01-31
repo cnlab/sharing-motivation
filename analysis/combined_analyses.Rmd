@@ -371,7 +371,7 @@ plot_aes = theme_minimal() +
 ```{r}
 # cleaned study data
 study1 = read.csv("../data/study1_data.csv", stringsAsFactors = FALSE) %>%
-  select(-contains("emo"), -msg_read) %>%
+  select(-contains("emo")) %>%
   mutate(study = "study 1",
          SID = sprintf("%s_%s", study, SID))
 
