@@ -33,7 +33,7 @@ if(!require('pacman')) {
 pacman::p_load(tidyverse, tidyText)
 ```
 
-## load data
+# load data
 ```{r}
 data_dir = "~/Library/CloudStorage/Box-Box/BB-PRIME-PhaseII_Data_854102/BB-PRIME-PhaseII_NonIDable/BBPRIME_tournament/data/"
 
@@ -73,6 +73,14 @@ data_person = read.csv(file.path(data_dir, "prepped/wave1_emotions.csv")) %>%
   group_by(scale_name, item) %>%
   mutate(value = scale(value, center = TRUE, scale = TRUE))
 
+climate_cause = read.csv(file.path(data_dir, "prepped/wave1_emotions.csv")) %>%
+  bind_rows(read.csv(file.path(data_dir, "prepped/wave1_other_dvs.csv"))) %>%
+  filter(grepl("climate_change_cause", scale_name)) %>%
+  mutate(group = gsub("_relevance", "", group),
+         group = recode(group, "social" = "other")) %>%
+  select(-n_missing) %>%
+  group_by(scale_name, item)
+
 data_petition = read.csv(file.path(data_dir, "prepped/wave1_petitions.csv")) %>%
   filter(grepl("relevance|control", group)) %>%
   filter(!grepl("petition_sign$", scale_name)) %>%
@@ -106,4 +114,5 @@ exploratory_dvs = data_actions %>%
 ```{r}
 write.csv(messages, "../data/study1_data.csv", row.names = FALSE)
 write.csv(exploratory_dvs, "../data/study1_exploratory_dvs.csv", row.names = FALSE)
+write.csv(climate_cause, "../data/study1_climate_cause.csv", row.names = FALSE)
 ```
